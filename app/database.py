@@ -26,6 +26,6 @@ def get_db():
         db.close()
 
 def create_tables():
-    # import models
-    # Base.metadata.create_all(bind=engine)
+    import models
+    Base.metadata.create_all(bind=engine)
     print("DB 연결 성공")

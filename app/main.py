@@ -5,7 +5,7 @@ from contextlib import asynccontextmanager
 from database import create_tables
 import os
 
-from routers import community
+from routers import community, auth
 
 import firebase_init
 from firebase_admin import messaging
@@ -23,6 +23,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="handy", lifespan=lifespan)
 
 # ===== ROUTER ===== #
+app.include_router(auth.router)
 app.include_router(community.router)
 
 # ===== CORS ===== #
