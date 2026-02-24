@@ -5,10 +5,14 @@ import base64
 import secrets
 import redis
 import requests
+from fastapi import Cookie, Response
+from sqlalchemy.orm import Session
 from dotenv import load_dotenv
 from passlib.context import CryptContext
 from cryptography.fernet import Fernet
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone, timedelta
+from jose import jwt, JWTError, ExpiredSignatureError
+from models import JwtTokens
 
 SECRET_KEY  = os.getenv("SECRET_KEY")
 ALGORITHM = os.getenv("ALGORITHM")
@@ -19,6 +23,47 @@ BCRYPT = CryptContext(schemes=["bcrypt"], deprecated="auto")
 FERNET = Fernet(base64.urlsafe_b64encode(hashlib.sha256(SECRET_KEY.encode()).digest()))
 
 r = redis.Redis(host="localhost", port=6379, db=0)
+
+def normalize_phone(phone: str) -> str:
+    """ 전화번호 정규화함수 """
+
+    if not phone:
+        return None
+
+    phone = phone.replace(" ", "").replace("-", "")
+
+    if phone.startswith("+82"):
+        phone = "0" + phone[3:]
+
+    return phone
+
+def normalize_birth(birth_str: str) -> date:
+    """ 문자열 생년월일 date 타입 변환함수 """
+    formats = ["%Y-%m-%d", "%Y.%m.%d", "%Y/%m/%d"]
+
+    for fmt in formats:
+        try:
+            return datetime.strptime(birth_str, fmt).date()
+        except ValueError:
+            continue
+
+def convert_gender(gender: str) -> str:
+    """ 성별 영문변환 함수 """
+    gender = "male" if gender == "남자" else "female"
+    return gender
+
+# def normalize_image(url: str) -> str:
+#     """ 프로필사진 URL 변환함수 """
+
+#     BASE_PATH = "/images/profile/"
+
+
+#     if not url:
+#         image = 'default.png'
+#         BASE_PATH + image
+
+#     else:
+
 
 def generate_signature(api_secret: str, date_time: str, salt: str) -> str:
     """ SMS 문자전송 객체 생성함수 """
@@ -37,19 +82,6 @@ def create_auth_header(api_key: str, api_secret: str) -> str:
     signature = generate_signature(api_secret, date_time, salt)
     
     return f"HMAC-SHA256 apiKey={api_key}, date={date_time}, salt={salt}, signature={signature}"
-
-def normalize_phone(phone: str) -> str:
-    """ 전화번호 정규화함수 """
-
-    if not phone:
-        return None
-
-    phone = phone.replace(" ", "").replace("-", "")
-
-    if phone.startswith("+82"):
-        phone = "0" + phone[3:]
-
-    return phone
 
 def password_encode(password: str):
     """ 비밀번호 인코딩 -> 암호화 작업 """
@@ -99,6 +131,7 @@ def save_code(phone: str, code: str):
     r.setex(key, 180, code)
 
 def verify_code(phone: str, input_code: str):
+    """ 인증번호 검증 함수 """
     key = f"sms:code:{phone}"
     stored_code = r.get(key)
 
@@ -131,3 +164,94 @@ def check_daily_limit(phone: str):
         r.expire(key, 86400)
 
     return True
+
+# ===================================================== JWT TOKENS ===================================================== #
+ACCESS_TOKEN_EXPIRE = timedelta(minutes=15)
+REFRESH_TOKEN_EXPIRE = timedelta(days=7)
+
+def create_access_token(member_id: int):
+    """ JWT 액세스 토큰 생성 """
+    exp = datetime.now(timezone.utc) + ACCESS_TOKEN_EXPIRE
+
+    payload = {
+        "member_id": member_id,
+        "type": "access",
+        "exp": exp  # 만료시간
+    }
+
+    token = jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
+
+    return token
+
+
+def create_refresh_token(member_id: int):
+    """ JWT 리프레쉬 토큰 생성 """
+    exp = datetime.now(timezone.utc) + REFRESH_TOKEN_EXPIRE
+
+    payload = {
+        "member_id": member_id,
+        "type": "refresh",
+        "exp": exp  # 만료시간
+    }
+
+    token = jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
+    
+    return token, exp
+
+
+def verify_token(token: str, token_type: str = "access"):
+    """ JWT 토큰 검증 """
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        member_id = payload.get("member_id")
+        input_token_type = payload.get("type")
+
+        if not input_token_type != token_type:
+            return None, "invalid"
+        
+        return member_id, None
+    
+    # 토큰 만료
+    except ExpiredSignatureError:
+        return None, "expired"
+
+    # 유효하지 않는 토큰
+    except JWTError:
+        return None, "invalid"
+
+
+def add_token_for_cookie(member_id: int, db: Session, response: Response):
+    """ JWT 액세스 / 리프레시 토큰 생성 후 쿠키에 추가하는 함수 """
+    access_token = create_access_token(member_id)
+    refresh_token, expire = create_refresh_token(member_id)
+
+    now = datetime.now()
+
+    # 기존 리프레시 토큰 검증
+    old_refresh_token = db.query(JwtTokens).filter(JwtTokens.member_id == member_id, JwtTokens.expires_at > now, JwtTokens.is_revoed == False).first()
+    
+    # 기존 리프레시 토큰 존재 시 사용불가처리
+    if old_refresh_token:
+        old_refresh_token.is_revoked = True
+        db.commit()
+
+    token = JwtTokens(
+        member_id = member_id,
+        refresh_token = refresh_token,
+        expires_at = expire
+    )
+
+    db.add(token)
+    db.commit()
+
+    response.set_cookie(
+        key="access_token",
+        value=access_token,
+        httponly=True
+    )
+
+    response.set_cookie(
+        key="refresh_token",
+        value=refresh_token,
+        httponly=True
+    )

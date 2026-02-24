@@ -12,9 +12,11 @@ class Member(Base):
     name = Column(String(100), nullable=True)
     birth = Column(Date, nullable=True)
     gender = Column(String(10), nullable=True)
+    image_url = Column(String(255), default="default.png")
     is_deleted = Column(Boolean, default=False)
 
-    social = relationship("SocialAccount", back_populates="member", cascade="all, delete-orphan")
+    social_accounts = relationship("SocialAccount", back_populates="member", cascade="all, delete-orphan")
+    tokens = relationship("JwtTokens", back_populates="member", cascade="all, delete-orphan")
 
 class SocialAccount(Base):
     __tablename__ = "social_accounts"
@@ -28,7 +30,19 @@ class SocialAccount(Base):
         UniqueConstraint("provider", "provider_id"),
     )
 
-    member = relationship("Member", back_populates="social", cascade="all, delete-orphan")
+    member = relationship("Member", back_populates="social_accounts")
+
+class JwtTokens(Base):
+    __tablename__ = "jwt_tokens"
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    member_id = Column(BigInteger, ForeignKey("members.id"))
+    refresh_token = Column(String(512))
+    expires_at = Column(DateTime, nullable=True)
+    is_revoked = Column(Boolean, server_default="false")
+    created_at = Column(DateTime, server_default=func.now())
+
+    member = relationship("Member", back_populates="tokens")
 
 class Store(Base):
     __tablename__ = "stores"

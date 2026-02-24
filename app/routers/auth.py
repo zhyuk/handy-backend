@@ -2,7 +2,7 @@ import os
 import httpx
 import uuid
 import logging
-from fastapi import APIRouter, Depends, Query, Cookie, HTTPException
+from fastapi import APIRouter, Depends, Query, Cookie, HTTPException, Response
 from fastapi.responses import RedirectResponse, HTMLResponse, JSONResponse
 from sqlalchemy import text, func
 from sqlalchemy.orm import Session
@@ -12,7 +12,7 @@ from datetime import datetime, timedelta
 
 from models import Member, SocialAccount
 from database import get_db, SessionLocal
-from utils.auth_utils import normalize_phone, password_encode, password_decode, generate_code, save_code, send_code_to_user, verify_code, check_daily_limit
+from utils.auth_utils import normalize_phone, normalize_birth, convert_gender, password_encode, password_decode, generate_code, save_code, send_code_to_user, verify_code, check_daily_limit, add_token_for_cookie
 from schemas.login import ValidLogin, Signup, PhoneReq, VerifyReq
 
 logger = logging.getLogger(__name__)
@@ -32,8 +32,17 @@ router = APIRouter(prefix="/api/auth", tags=["소셜 로그인 관리"])
 
 _state_store = {}
 
+@router.post("/verify")
+def verify_tokens(response: Response, ):
+    """
+    ----------------------------------------
+    JWT 토큰 검증 API
+    ----------------------------------------
+    """
+    pass 
+
 @router.post("/login")
-def general_login(req: ValidLogin, db: Session = Depends(get_db)):
+def general_login(req: ValidLogin, response: Response, db: Session = Depends(get_db)):
     """
     ----------------------------------------
     로그인 API
@@ -45,9 +54,12 @@ def general_login(req: ValidLogin, db: Session = Depends(get_db)):
     if not user:
         raise HTTPException(status_code=401, detail="아직 가입된 계정이 없어요. 회원가입을 진행해 주세요.")
     else:
-        # if password_decode(req.password, user.password):
-        if user.password != req.password:
+        if not password_decode(req.password, user.password):
             raise HTTPException(status_code=401, detail="전화번호 또는 비밀번호가 올바르지 않아요.")
+        
+    add_token_for_cookie(user.id, db, response)
+
+    return {"success": True}
         
 @router.post("/signup/code/send")
 def send_sms(req: PhoneReq):
@@ -59,7 +71,7 @@ def send_sms(req: PhoneReq):
     phone = normalize_phone(req.phone)
 
     if not check_daily_limit(phone):
-        raise HTTPException(400, "인증번호는 하루 최대 5번까지 발송 가능해요")
+        raise HTTPException(status_code=400, detail="인증번호는 하루 최대 5번까지 발송 가능해요")
 
     code = generate_code()
     print(code)
@@ -93,16 +105,38 @@ def signup(req: Signup, db: Session = Depends(get_db)):
     회원가입 API
     ----------------------------------------
     """
-    # verified = r.get(f"sms:verified:{phone}")
+    # existing = db.query(Member).filter(Member.phone == req.phone).first()
 
-    # if not verified:
-    #     raise HTTPException(400, "휴대폰 인증이 필요해요")
+    # if existing:
+    #     raise HTTPException(status_code=400, detail="이미 가입된 번호입니다.")
 
-    # r.delete(f"sms:verified:{phone}")  # 1회용
-    print(req)
-
+    phone = normalize_phone(req.phone)
     hashed_pw = password_encode(req.password)
-        
+    birth = normalize_birth(req.birth)
+    gender = convert_gender(req.gender)
+
+    member = Member(
+        phone = phone,
+        password = hashed_pw,
+        name = req.name,
+        birth = birth,
+        gender = gender,
+        # image_url = 
+    )
+
+    db.add(member)
+    db.commit()
+
+@router.post("/logout")
+def logout():
+    """
+    ----------------------------------------
+    로그아웃 API
+    ----------------------------------------
+    """
+    pass
+
+
 
 @router.get("/kakao/login")
 def kakao_login():
@@ -230,9 +264,7 @@ async def kakao_callback(code: str, state: str, db: Session = Depends(get_db)):
         return JSONResponse(status_code=500, content={"error": "DB 오류"})
     
     # JWT 토큰 생성
-    
-    # return RedirectResponse(url="http://localhost:5173/")
-    
+        
 
 @router.get("/google/login")
 def google_login():
@@ -350,7 +382,6 @@ async def google_callback(code: str, state: str, db: Session = Depends(get_db)):
     
     # JWT 토큰 생성
 
-    # return RedirectResponse(url="http://localhost:5173/")
 
 @router.get("/google/info")
 async def google_callback(code: str, state: str, db: Session = Depends(get_db)):
@@ -359,4 +390,6 @@ async def google_callback(code: str, state: str, db: Session = Depends(get_db)):
     구글 소셜로그인 최초가입 시 추가정보 입력 API
     ----------------------------------------
     """
+
+
 
