@@ -13,17 +13,17 @@ from cryptography.fernet import Fernet
 from datetime import date, datetime, timezone, timedelta
 from jose import jwt, JWTError, ExpiredSignatureError
 from models import JwtTokens
+from solapi import SolapiMessageService
+from solapi.model import RequestMessage
 
 SECRET_KEY  = os.getenv("SECRET_KEY")
 ALGORITHM = os.getenv("ALGORITHM")
-SMS_KEY = os.getenv("SMS_CLIENT_ID")
-SMS_SECRET_KEY = os.getenv("SMS_CLIENT_SECRET")
-
 BCRYPT = CryptContext(schemes=["bcrypt"], deprecated="auto")
 FERNET = Fernet(base64.urlsafe_b64encode(hashlib.sha256(SECRET_KEY.encode()).digest()))
 
 r = redis.Redis(host="localhost", port=6379, db=0)
 
+# ===================================================== 일반 정규화 ===================================================== #
 def normalize_phone(phone: str) -> str:
     """ 전화번호 정규화함수 """
 
@@ -51,38 +51,9 @@ def convert_gender(gender: str) -> str:
     """ 성별 영문변환 함수 """
     gender = "male" if gender == "남자" else "female"
     return gender
+# ===================================================== 일반 정규화 ===================================================== #
 
-# def normalize_image(url: str) -> str:
-#     """ 프로필사진 URL 변환함수 """
-
-#     BASE_PATH = "/images/profile/"
-
-
-#     if not url:
-#         image = 'default.png'
-#         BASE_PATH + image
-
-#     else:
-
-
-def generate_signature(api_secret: str, date_time: str, salt: str) -> str:
-    """ SMS 문자전송 객체 생성함수 """
-    data = date_time + salt
-    signature = hmac.new(
-        api_secret.encode(),
-        data.encode(),
-        hashlib.sha256
-    ).hexdigest()
-    return signature
-
-def create_auth_header(api_key: str, api_secret: str) -> str:
-    """ Authorization 헤더 생성 """
-    date_time = datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z')
-    salt = secrets.token_hex(16)
-    signature = generate_signature(api_secret, date_time, salt)
-    
-    return f"HMAC-SHA256 apiKey={api_key}, date={date_time}, salt={salt}, signature={signature}"
-
+# ===================================================== 비밀번호 관련 ===================================================== #
 def password_encode(password: str):
     """ 비밀번호 인코딩 -> 암호화 작업 """
     return BCRYPT.hash(password)
@@ -90,6 +61,14 @@ def password_encode(password: str):
 def password_decode(password: str, hashed_password: str):
     """ 비밀번호 디코딩 -> 암호 해독 작업 """
     return BCRYPT.verify(password, hashed_password)
+# ===================================================== 비밀번호 관련 ===================================================== #
+
+# ===================================================== 인증번호 관련 ===================================================== #
+SMS_KEY = os.getenv("SMS_CLIENT_ID")
+SMS_SECRET_KEY = os.getenv("SMS_CLIENT_SECRET")
+
+# 인증번호 객체 생성
+message_service = SolapiMessageService(api_key=SMS_KEY, api_secret=SMS_SECRET_KEY)
 
 def generate_code():
     """ 인증번호 생성 함수 """
@@ -98,32 +77,15 @@ def generate_code():
 def send_code_to_user(phone: str, code: str):
     """ 인증번호 전송 함수 (CoolSMS 연동) """
 
-    auth_header = create_auth_header(SMS_KEY, SMS_SECRET_KEY)
-
-    headers = {
-        "Authorization": auth_header,
-        "Content-Type": "application/json"
-    }
-
-    message_data = {
-        "messages": [
-            {
-                "to": phone,
-                "from": os.getenv("SMS_SENDER"),
-                "text": f"[HANDY] 인증번호는 {code} 입니다. (3분 이내 입력)"
-            }
-        ]
-    }
-
-    response = requests.post(
-        "https://api.solapi.com/messages/v4/send-many/detail",
-        json=message_data,
-        headers=headers,
-        timeout=5
+    message = RequestMessage(
+    to=phone,
+    from_=os.getenv("SMS_SENDER"),
+    text=f"[HANDY] 인증번호는 {code} 입니다. (3분 이내 입력)"
     )
 
-    response.raise_for_status()
-    return response.json()
+    res = message_service.send(message)
+
+    return res
 
 def save_code(phone: str, code: str):
     """ 인증번호 Redis 저장 함수 - 만료시간 : 3분 """
@@ -164,6 +126,47 @@ def check_daily_limit(phone: str):
         r.expire(key, 86400)
 
     return True
+# ===================================================== 인증번호 관련 ===================================================== #
+
+# ===================================================== 임시토큰 ===================================================== #
+def encode_temp_signup_token(member_id: int):
+    """ 회원가입용 임시토큰 생성 """
+    exp = datetime.now(timezone.utc) + timedelta(minutes=5)
+
+    payload = {
+        "member_id": member_id,
+        "type": "signup",
+        "exp": exp
+    }
+
+    token = jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
+    return token
+
+def decode_temp_signup_token(signup_token: str | None = Cookie(None)):
+    """ 회원가입용 임시토큰 해독 """
+
+    if signup_token is None:
+        return None, None
+    
+    try:
+        payload = jwt.decode(signup_token, SECRET_KEY, algorithms=[ALGORITHM])
+        member_id = payload.get("member_id")
+        input_token_type = payload.get("type")
+
+        if input_token_type != "signup":
+            return None, "invalid"
+        
+        return member_id, None
+    
+    # 토큰 만료
+    except ExpiredSignatureError:
+        return None, "expired"
+
+    # 유효하지 않는 토큰
+    except JWTError:
+        return None, "invalid"
+
+# ===================================================== 임시토큰 ===================================================== #
 
 # ===================================================== JWT TOKENS ===================================================== #
 ACCESS_TOKEN_EXPIRE = timedelta(minutes=15)
@@ -228,7 +231,7 @@ def add_token_for_cookie(member_id: int, db: Session, response: Response):
     now = datetime.now()
 
     # 기존 리프레시 토큰 검증
-    old_refresh_token = db.query(JwtTokens).filter(JwtTokens.member_id == member_id, JwtTokens.expires_at > now, JwtTokens.is_revoed == False).first()
+    old_refresh_token = db.query(JwtTokens).filter(JwtTokens.member_id == member_id, JwtTokens.expires_at > now, JwtTokens.is_revoked == False).first()
     
     # 기존 리프레시 토큰 존재 시 사용불가처리
     if old_refresh_token:
@@ -255,3 +258,4 @@ def add_token_for_cookie(member_id: int, db: Session, response: Response):
         value=refresh_token,
         httponly=True
     )
+# ===================================================== JWT TOKENS ===================================================== #

@@ -5,7 +5,7 @@ from contextlib import asynccontextmanager
 from database import create_tables
 import os
 
-from routers import community, auth
+from routers import community, auth, owner
 
 import firebase_init
 from firebase_admin import messaging
@@ -24,6 +24,7 @@ app = FastAPI(title="handy", lifespan=lifespan)
 
 # ===== ROUTER ===== #
 app.include_router(auth.router)
+app.include_router(owner.router)
 app.include_router(community.router)
 
 # ===== CORS ===== #

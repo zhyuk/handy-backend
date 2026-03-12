@@ -52,6 +52,7 @@ dependencies = [
     { name = "psycopg2" },
     { name = "python-jose" },
     { name = "redis" },
+    { name = "solapi" },
     { name = "sqlalchemy" },
     { name = "uvicorn" },
 ]
@@ -67,6 +68,7 @@ requires-dist = [
     { name = "psycopg2", specifier = ">=2.9.11" },
     { name = "python-jose", specifier = ">=3.5.0" },
     { name = "redis", specifier = ">=7.2.0" },
+    { name = "solapi", specifier = ">=5.0.3" },
     { name = "sqlalchemy", specifier = ">=2.0.46" },
     { name = "uvicorn", specifier = ">=0.40.0" },
 ]
@@ -956,6 +958,19 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/94/e7/b2c673351809dca68a0e064b6af791aa332cf192da575fd474ed7d6f16a2/six-1.17.0.tar.gz", hash = "sha256:ff70335d468e7eb6ec65b95b99d3a2836546063f63acc5171de367e834932a81", size = 34031, upload-time = "2024-12-04T17:35:28.174Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/b7/ce/149a00dd41f10bc29e5921b496af8b574d8413afcd5e30dfa0ed46c2cc5e/six-1.17.0-py2.py3-none-any.whl", hash = "sha256:4721f391ed90541fddacab5acf947aa0d3dc7d27b2e1e8eda2be8970586c3274", size = 11050, upload-time = "2024-12-04T17:35:26.475Z" },
+]
+
+[[package]]
+name = "solapi"
+version = "5.0.3"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "httpx" },
+    { name = "pydantic" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/94/77/27ef67b3b61f690dc8e31f02ad7c1f735ed71df9af93b00426a7c956ee67/solapi-5.0.3.tar.gz", hash = "sha256:3090cf2e760885197ca18cccc3f6c2f21c32f99d3afdb948ff486f355b37e297", size = 18365, upload-time = "2026-01-22T13:08:12.085Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/b6/48/6b65fd1f2187ed50f49699e1c62e2e4d37875fcdd3b26d3d075f02a8eddc/solapi-5.0.3-py3-none-any.whl", hash = "sha256:45b0d29267291026141d1472fc73539fb7dc0509202f56047f4af87a273af709", size = 34957, upload-time = "2026-01-22T13:08:10.061Z" },
 ]
 
 [[package]]

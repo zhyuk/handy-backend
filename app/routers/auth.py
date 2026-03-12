@@ -10,9 +10,9 @@ from pathlib import Path
 from dotenv import load_dotenv
 from datetime import datetime, timedelta
 
-from models import Member, SocialAccount
+from models import Member, SocialAccount, JwtTokens
 from database import get_db, SessionLocal
-from utils.auth_utils import normalize_phone, normalize_birth, convert_gender, password_encode, password_decode, generate_code, save_code, send_code_to_user, verify_code, check_daily_limit, add_token_for_cookie
+from utils.auth_utils import normalize_phone, normalize_birth, convert_gender, password_encode, password_decode, generate_code, save_code, send_code_to_user, verify_code, check_daily_limit, add_token_for_cookie, encode_temp_signup_token, decode_temp_signup_token
 from schemas.login import ValidLogin, Signup, PhoneReq, VerifyReq
 
 logger = logging.getLogger(__name__)
@@ -28,6 +28,8 @@ GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID")
 GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET")
 GOOGLE_REDIRECT_URI = os.getenv("GOOGLE_REDIRECT_URI")
 
+FRONTEND_URL = os.getenv("VITE_API_URL")
+
 router = APIRouter(prefix="/api/auth", tags=["소셜 로그인 관리"])
 
 _state_store = {}
@@ -41,6 +43,7 @@ def verify_tokens(response: Response, ):
     """
     pass 
 
+# ===================================================== 일반 로그인 ===================================================== #
 @router.post("/login")
 def general_login(req: ValidLogin, response: Response, db: Session = Depends(get_db)):
     """
@@ -60,15 +63,22 @@ def general_login(req: ValidLogin, response: Response, db: Session = Depends(get
     add_token_for_cookie(user.id, db, response)
 
     return {"success": True}
-        
+# ===================================================== 일반 로그인 ===================================================== #
+      
+# ===================================================== 인증번호 ===================================================== #
 @router.post("/signup/code/send")
-def send_sms(req: PhoneReq):
+def send_sms(req: PhoneReq, db: Session = Depends(get_db)):
     """
     ----------------------------------------
     회원가입용 인증코드 발송 API
     ----------------------------------------
     """
     phone = normalize_phone(req.phone)
+
+    member = db.query(Member).filter(Member.phone == phone).first()
+
+    if member:
+        raise HTTPException(status_code=400, detail="이미 가입된 회원이에요")
 
     if not check_daily_limit(phone):
         raise HTTPException(status_code=400, detail="인증번호는 하루 최대 5번까지 발송 가능해요")
@@ -96,48 +106,75 @@ def verify_sms(req: VerifyReq):
         raise HTTPException(400, msg)
     
     return {"message": msg}
+# ===================================================== 인증번호 ===================================================== #
 
-
+# ===================================================== 회원가입 ===================================================== #
 @router.post("/signup")
-def signup(req: Signup, db: Session = Depends(get_db)):
+def signup(req: Signup, db: Session = Depends(get_db), signup_token: dict = Depends(decode_temp_signup_token)):
     """
     ----------------------------------------
     회원가입 API
     ----------------------------------------
     """
-    # existing = db.query(Member).filter(Member.phone == req.phone).first()
+    member_id, error = signup_token
+    existing = db.query(Member).filter(Member.phone == req.phone).first()
 
-    # if existing:
-    #     raise HTTPException(status_code=400, detail="이미 가입된 번호입니다.")
-
+    if existing:
+        raise HTTPException(status_code=400, detail="이미 가입된 번호입니다.")
+    
     phone = normalize_phone(req.phone)
     hashed_pw = password_encode(req.password)
     birth = normalize_birth(req.birth)
     gender = convert_gender(req.gender)
+    image_url = str(uuid.uuid4()) + req.imageUrl if req.imageUrl else "default.png"
 
-    member = Member(
-        phone = phone,
-        password = hashed_pw,
-        name = req.name,
-        birth = birth,
-        gender = gender,
-        # image_url = 
-    )
+    if req.type == "social":
+        member = db.query(Member).filter(Member.id == member_id).first()
+        member.phone = phone
+        member.name = req.name
+        member.birth = birth
+        member.gender = gender
+        member.image_url = image_url
 
-    db.add(member)
+    else:
+        member = Member(
+            phone = phone,
+            password = hashed_pw,
+            name = req.name,
+            birth = birth,
+            gender = gender,
+            image_url = image_url,
+        )
+        db.add(member)
+        
     db.commit()
+# ===================================================== 회원가입 ===================================================== #
 
+# ===================================================== 로그아웃 ===================================================== #
 @router.post("/logout")
-def logout():
+def logout(res: Response, access_token: str = Cookie(None), refresh_token: str = Cookie(None), db: Session = Depends(get_db)):
     """
     ----------------------------------------
     로그아웃 API
     ----------------------------------------
     """
-    pass
+    # print(access_token)
+    # print(refresh_token)
 
+    if refresh_token:
+        token = db.query(JwtTokens).filter(JwtTokens.refresh_token == refresh_token, JwtTokens.is_revoked == False).first()
 
+        if token:
+            token.is_revoked = True
+            db.commit()
 
+    res.delete_cookie(key="refresh_token")
+    res.delete_cookie(key="access_token")
+
+    return JSONResponse(status_code=200, content={"message": "로그아웃 완료"})
+# ===================================================== 로그아웃 ===================================================== #
+
+# ===================================================== 카카오 로그인 ===================================================== #
 @router.get("/kakao/login")
 def kakao_login():
     """
@@ -231,18 +268,26 @@ async def kakao_callback(code: str, state: str, db: Session = Depends(get_db)):
     gender = kakao_account.get("gender")
     
     # 신규가입 여부
-    newly_created = False
+    # newly_created = False
     expires_in = int(token_json.get("expires_in", 6 * 60 * 60))
 
     try:
+        # 기존 회원 조회
         socail_account = db.query(SocialAccount).filter(SocialAccount.provider == 'kakao').filter(SocialAccount.provider_id == str(provider_id)).first()
 
+        # 신규 회원일 경우
         if not socail_account:
+            # member = Member(
+            #     phone = phone,
+            #     name = name,
+            #     birth = birthday,
+            #     gender = gender,
+            # )
             member = Member(
-                phone = phone,
-                name = name,
-                birth = birthday,
-                gender = gender,
+                phone = None,
+                name = None,
+                birth = None,
+                gender = None,
             )
             db.add(member)
             db.flush()
@@ -254,9 +299,24 @@ async def kakao_callback(code: str, state: str, db: Session = Depends(get_db)):
             )
 
             db.add(social)
-            newly_created = True
+            db.commit()
+            db.flush()
 
-        db.commit()
+            # newly_created = True
+            temp_token = encode_temp_signup_token(member.id)
+
+            res = RedirectResponse(url=f"{FRONTEND_URL}/#/signup?type=social")
+            res.set_cookie(
+                key="signup_token",
+                value=temp_token,
+                httponly=True,
+                max_age=300
+            )
+
+        # 기존회원일 경우
+        # else:
+        #     res = RedirectResponse(url=f"{FRONTEND_URL}/#/onboarding/member-type")
+        return res
 
     except Exception as e:
         db.rollback()
@@ -264,8 +324,9 @@ async def kakao_callback(code: str, state: str, db: Session = Depends(get_db)):
         return JSONResponse(status_code=500, content={"error": "DB 오류"})
     
     # JWT 토큰 생성
-        
+# ===================================================== 카카오 로그인 ===================================================== #
 
+# ===================================================== 구글 로그인 ===================================================== #
 @router.get("/google/login")
 def google_login():
     """
@@ -370,10 +431,17 @@ async def google_callback(code: str, state: str, db: Session = Depends(get_db)):
                 provider_id = provider_id
             )
 
-            db.add(social)
             newly_created = True
+            db.add(social)
+            db.commit()
 
-        db.commit()
+            res = RedirectResponse(url=f"{FRONTEND_URL}/#/profile-info")
+
+        # 기존회원일 경우
+        else:
+            res = RedirectResponse(url=f"{FRONTEND_URL}/#/onboarding/member-type")
+        return res
+
 
     except Exception as e:
         db.rollback()
@@ -381,15 +449,13 @@ async def google_callback(code: str, state: str, db: Session = Depends(get_db)):
         return JSONResponse(status_code=500, content={"error": "DB 오류"})
     
     # JWT 토큰 생성
+# ===================================================== 구글 로그인 ===================================================== #
 
-
-@router.get("/google/info")
-async def google_callback(code: str, state: str, db: Session = Depends(get_db)):
-    """
-    ----------------------------------------
-    구글 소셜로그인 최초가입 시 추가정보 입력 API
-    ----------------------------------------
-    """
-
-
-
+# @router.get("/google/info")
+# async def google_callback(code: str, state: str, db: Session = Depends(get_db)):
+#     """
+#     ----------------------------------------
+#     구글 소셜로그인 최초가입 시 추가정보 입력 API
+#     ----------------------------------------
+#     """
+ 

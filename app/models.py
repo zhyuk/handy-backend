@@ -8,7 +8,7 @@ class Member(Base):
 
     id = Column(BigInteger, primary_key=True, autoincrement=True)
     password = Column(String(255), nullable=True)
-    phone = Column(String(20), nullable=True)
+    phone = Column(String(20), nullable=True, unique=True)
     name = Column(String(100), nullable=True)
     birth = Column(Date, nullable=True)
     gender = Column(String(10), nullable=True)
