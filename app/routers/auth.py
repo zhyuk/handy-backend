@@ -110,7 +110,7 @@ def verify_sms(req: VerifyReq):
 
 # ===================================================== 회원가입 ===================================================== #
 @router.post("/signup")
-def signup(req: Signup, db: Session = Depends(get_db), signup_token: dict = Depends(decode_temp_signup_token)):
+def signup(req: Signup, res: Response, db: Session = Depends(get_db), signup_token: dict = Depends(decode_temp_signup_token)):
     """
     ----------------------------------------
     회원가입 API
@@ -148,6 +148,9 @@ def signup(req: Signup, db: Session = Depends(get_db), signup_token: dict = Depe
         db.add(member)
         
     db.commit()
+
+    # 회원가입용 임시토큰 삭제
+    res.delete_cookie(key="signup_token")
 # ===================================================== 회원가입 ===================================================== #
 
 # ===================================================== 로그아웃 ===================================================== #
@@ -267,8 +270,6 @@ async def kakao_callback(code: str, state: str, db: Session = Depends(get_db)):
     birthday = datetime.strptime(kakao_account.get("birthyear") + kakao_account.get("birthday"), "%Y%m%d").date()
     gender = kakao_account.get("gender")
     
-    # 신규가입 여부
-    # newly_created = False
     expires_in = int(token_json.get("expires_in", 6 * 60 * 60))
 
     try:
@@ -302,7 +303,6 @@ async def kakao_callback(code: str, state: str, db: Session = Depends(get_db)):
             db.commit()
             db.flush()
 
-            # newly_created = True
             temp_token = encode_temp_signup_token(member.id)
 
             res = RedirectResponse(url=f"{FRONTEND_URL}/#/signup?type=social")
@@ -314,8 +314,9 @@ async def kakao_callback(code: str, state: str, db: Session = Depends(get_db)):
             )
 
         # 기존회원일 경우
-        # else:
-        #     res = RedirectResponse(url=f"{FRONTEND_URL}/#/onboarding/member-type")
+        else:
+            res = RedirectResponse(url=f"{FRONTEND_URL}/#/onboarding/member-type")
+            # TODO: JWT 토큰 생성 
         return res
 
     except Exception as e:
@@ -323,7 +324,6 @@ async def kakao_callback(code: str, state: str, db: Session = Depends(get_db)):
         logger.exception("DB error")
         return JSONResponse(status_code=500, content={"error": "DB 오류"})
     
-    # JWT 토큰 생성
 # ===================================================== 카카오 로그인 ===================================================== #
 
 # ===================================================== 구글 로그인 ===================================================== #
@@ -413,8 +413,6 @@ async def google_callback(code: str, state: str, db: Session = Depends(get_db)):
     
     provider_id = user_json.get("sub")
 
-    # 신규가입 여부
-    newly_created = False
     expires_in = int(token_json.get("expires_in", 6 * 60 * 60))
 
     try:
@@ -431,15 +429,23 @@ async def google_callback(code: str, state: str, db: Session = Depends(get_db)):
                 provider_id = provider_id
             )
 
-            newly_created = True
             db.add(social)
             db.commit()
 
-            res = RedirectResponse(url=f"{FRONTEND_URL}/#/profile-info")
+            temp_token = encode_temp_signup_token(member.id)
+
+            res = RedirectResponse(url=f"{FRONTEND_URL}/#/signup?type=social")
+            res.set_cookie(
+                key="signup_token",
+                value=temp_token,
+                httponly=True,
+                max_age=300
+            )
 
         # 기존회원일 경우
         else:
             res = RedirectResponse(url=f"{FRONTEND_URL}/#/onboarding/member-type")
+            # TODO: JWT 토큰 생성
         return res
 
 
@@ -448,14 +454,5 @@ async def google_callback(code: str, state: str, db: Session = Depends(get_db)):
         logger.exception("DB error")
         return JSONResponse(status_code=500, content={"error": "DB 오류"})
     
-    # JWT 토큰 생성
 # ===================================================== 구글 로그인 ===================================================== #
-
-# @router.get("/google/info")
-# async def google_callback(code: str, state: str, db: Session = Depends(get_db)):
-#     """
-#     ----------------------------------------
-#     구글 소셜로그인 최초가입 시 추가정보 입력 API
-#     ----------------------------------------
-#     """
  

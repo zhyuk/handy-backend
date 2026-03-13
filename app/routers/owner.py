@@ -8,6 +8,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 from database import get_db, SessionLocal
+from schemas.login import StoreInfo
 
 ENV_PATH = Path(__file__).resolve().parent.parent.parent / ".env"
 load_dotenv(ENV_PATH)
@@ -24,18 +25,32 @@ async def verify_business(bno: str):
     사업자등록번호 조회 API
     ----------------------------------------
     """
-
-    print(bno)
     
-    url = f"https://bizno.net/api/fapi?key={BUSINESS_KEY}&gb=3&q={bno}&type=json"
+    url = "https://api.odcloud.kr/api/nts-businessman/v1/status"
+
+    params = {
+        "serviceKey": BUSINESS_KEY
+    }
+
+    data = {
+        "b_no": [bno]
+    }
 
     async with httpx.AsyncClient() as client:
-            res = await client.get(url)
-
-    if "{" not in res.text:
-        return {
-            "error": "Bizno API error",
-            "raw": res.text
-        }
+        res = await client.post(
+            url,
+            params=params,
+            json=data
+        )
 
     return res.json()
+
+@router.post("/stores")
+def add_store_info(req: StoreInfo, db: Session = Depends(get_db)):
+    """
+    ----------------------------------------
+    매장정보 추가 API
+    ----------------------------------------
+    """
+
+    print(req)

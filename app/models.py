@@ -51,8 +51,9 @@ class Store(Base):
     code = Column(BigInteger, unique=True)
     name = Column(String(100), nullable=False)
     address = Column(String(255), nullable=False)
-    industry = Column(String(100), nullable=False)
+    addressDetail = Column(String(255), nullable=True)
+    industry = Column(String(100), nullable=False)  # 업종
     owner = Column(String(100), nullable=False)
     number = Column(String(20), nullable=False)
     image = Column(Text, nullable=False)
-    radius = Column(Integer, nullable=False)
+    radius = Column(Integer, nullable=True)
