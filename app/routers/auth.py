@@ -2,7 +2,11 @@ import os
 import httpx
 import uuid
 import logging
-from fastapi import APIRouter, Depends, Query, Cookie, HTTPException, Response
+import jwt
+import time
+import json
+from jwt.algorithms import RSAAlgorithm
+from fastapi import APIRouter, Depends, Query, Cookie, HTTPException, Response, Form
 from fastapi.responses import RedirectResponse, HTMLResponse, JSONResponse
 from sqlalchemy import text, func
 from sqlalchemy.orm import Session
@@ -12,8 +16,8 @@ from datetime import datetime, timedelta
 
 from models import Member, SocialAccount, JwtTokens
 from database import get_db, SessionLocal
-from utils.auth_utils import normalize_phone, normalize_birth, convert_gender, password_encode, password_decode, generate_code, save_code, send_code_to_user, verify_code, check_daily_limit, add_token_for_cookie, encode_temp_signup_token, decode_temp_signup_token
-from schemas.login import ValidLogin, Signup, PhoneReq, VerifyReq
+from utils.auth_utils import normalize_phone, normalize_birth, convert_gender, password_encode, password_decode, generate_code, save_code, send_code_to_user, verify_code, check_daily_limit, add_token_for_cookie, encode_temp_signup_token, decode_temp_signup_token, verify_token
+from schemas.login import ValidLogin, Signup, PhoneReq, VerifyReq, AppleCallbackRequest
 
 logger = logging.getLogger(__name__)
 
@@ -28,20 +32,28 @@ GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID")
 GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET")
 GOOGLE_REDIRECT_URI = os.getenv("GOOGLE_REDIRECT_URI")
 
+APPLE_CLIENT_ID = os.getenv("APPLE_CLIENT_ID")
+APPLE_TEAM_ID = os.getenv("APPLE_TEAM_ID")
+APPLE_KEY_ID = os.getenv("APPLE_KEY_ID")
+APPLE_PRIVATE_KEY = os.getenv("APPLE_PRIVATE_KEY")
+APPLE_REDIRECT_URI = os.getenv("APPLE_REDIRECT_URI")
+
 FRONTEND_URL = os.getenv("VITE_API_URL")
 
 router = APIRouter(prefix="/api/auth", tags=["소셜 로그인 관리"])
 
 _state_store = {}
 
-@router.post("/verify")
-def verify_tokens(response: Response, ):
+# ===================================================== JWT 토큰 검증 ===================================================== #
+@router.post("/me")
+def verify_tokens(access_token: str = Cookie(None)):
     """
     ----------------------------------------
     JWT 토큰 검증 API
     ----------------------------------------
     """
-    pass 
+    return verify_token(access_token, "access")
+# ===================================================== JWT 토큰 검증 ===================================================== #
 
 # ===================================================== 일반 로그인 ===================================================== #
 @router.post("/login")
@@ -161,8 +173,6 @@ def logout(res: Response, access_token: str = Cookie(None), refresh_token: str =
     로그아웃 API
     ----------------------------------------
     """
-    # print(access_token)
-    # print(refresh_token)
 
     if refresh_token:
         token = db.query(JwtTokens).filter(JwtTokens.refresh_token == refresh_token, JwtTokens.is_revoked == False).first()
@@ -274,16 +284,10 @@ async def kakao_callback(code: str, state: str, db: Session = Depends(get_db)):
 
     try:
         # 기존 회원 조회
-        socail_account = db.query(SocialAccount).filter(SocialAccount.provider == 'kakao').filter(SocialAccount.provider_id == str(provider_id)).first()
+        social_account = db.query(SocialAccount).filter(SocialAccount.provider == 'kakao').filter(SocialAccount.provider_id == str(provider_id)).first()
 
         # 신규 회원일 경우
-        if not socail_account:
-            # member = Member(
-            #     phone = phone,
-            #     name = name,
-            #     birth = birthday,
-            #     gender = gender,
-            # )
+        if not social_account:
             member = Member(
                 phone = None,
                 name = None,
@@ -315,9 +319,17 @@ async def kakao_callback(code: str, state: str, db: Session = Depends(get_db)):
 
         # 기존회원일 경우
         else:
+            member = db.query(Member).filter(Member.id == social_account.member_id).first()
+
+            if member.phone is None and member.name is None:
+                temp_token = encode_temp_signup_token(member.id)
+                res = RedirectResponse(url=f"{FRONTEND_URL}/#/signup?type=social")
+                res.set_cookie(key="signup_token", value=temp_token, httponly=True, max_age=300)
+                return res
+
             res = RedirectResponse(url=f"{FRONTEND_URL}/#/onboarding/member-type")
-            # TODO: JWT 토큰 생성 
-        return res
+            add_token_for_cookie(social_account.member_id, db, res)
+            return res
 
     except Exception as e:
         db.rollback()
@@ -416,9 +428,9 @@ async def google_callback(code: str, state: str, db: Session = Depends(get_db)):
     expires_in = int(token_json.get("expires_in", 6 * 60 * 60))
 
     try:
-        socail_account = db.query(SocialAccount).filter(SocialAccount.provider == 'google').filter(SocialAccount.provider_id == str(provider_id)).first()
+        social_account = db.query(SocialAccount).filter(SocialAccount.provider == 'google').filter(SocialAccount.provider_id == str(provider_id)).first()
 
-        if not socail_account:
+        if not social_account:
             member = Member()
             db.add(member)
             db.flush()
@@ -444,9 +456,17 @@ async def google_callback(code: str, state: str, db: Session = Depends(get_db)):
 
         # 기존회원일 경우
         else:
+            member = db.query(Member).filter(Member.id == social_account.member_id).first()
+
+            if member.phone is None and member.name is None:
+                temp_token = encode_temp_signup_token(member.id)
+                res = RedirectResponse(url=f"{FRONTEND_URL}/#/signup?type=social")
+                res.set_cookie(key="signup_token", value=temp_token, httponly=True, max_age=300)
+                return res
+
             res = RedirectResponse(url=f"{FRONTEND_URL}/#/onboarding/member-type")
-            # TODO: JWT 토큰 생성
-        return res
+            add_token_for_cookie(social_account.member_id, db, res)
+            return res
 
 
     except Exception as e:
@@ -455,4 +475,168 @@ async def google_callback(code: str, state: str, db: Session = Depends(get_db)):
         return JSONResponse(status_code=500, content={"error": "DB 오류"})
     
 # ===================================================== 구글 로그인 ===================================================== #
- 
+
+# ===================================================== 애플 로그인 ===================================================== #
+@router.get("/apple/login")
+def apple_login():
+    """
+    ----------------------------------------
+    애플 소셜로그인 API
+    ----------------------------------------
+    """
+    state = str(uuid.uuid4())
+    _state_store[state] = datetime.now() + timedelta(minutes=10)
+
+    apple_auth_url = (
+        f"https://appleid.apple.com/auth/authorize"
+        f"?response_type=code"
+        f"&client_id={APPLE_CLIENT_ID}"
+        f"&redirect_uri={APPLE_REDIRECT_URI}"
+        f"&scope=name%20email"
+        f"&response_mode=form_post"   # ⚠️ 애플은 이게 필수 (form_post로만 콜백 옴)
+        f"&state={state}"
+    )
+
+    return RedirectResponse(url=apple_auth_url)
+
+@router.post("/apple/callback")  # ⚠️ 애플은 POST로 콜백이 옴 (구글은 GET)
+async def apple_callback(
+    code: str = Form(...),
+    id_token: str = Form(None),
+    state: str = Form(None),
+    db: Session = Depends(get_db)
+):
+    """
+    ----------------------------------------
+    애플 소셜로그인 콜백 API
+    ----------------------------------------
+    """
+    # # state 검증
+    # if state not in _state_store or _state_store[state] < datetime.now():
+    #     _state_store.pop(state, None)
+    #     return JSONResponse(status_code=400, content={"error": "유효하지 않은 요청입니다."})
+
+    # del _state_store[state]
+
+    # client_secret 생성 (애플은 JWT로 동적 생성 필요)
+    client_secret = _create_apple_client_secret()
+
+    # 토큰 교환
+    try:
+        async with httpx.AsyncClient() as client:
+            token_res = await client.post(
+                "https://appleid.apple.com/auth/token",
+                data={
+                    "grant_type": "authorization_code",
+                    "client_id": APPLE_CLIENT_ID,
+                    "client_secret": client_secret,
+                    "redirect_uri": APPLE_REDIRECT_URI,
+                    "code": code,
+                },
+                headers={"Content-Type": "application/x-www-form-urlencoded"},
+                timeout=10
+            )
+
+        if token_res.status_code != 200:
+            logger.error(f"Apple token exchange failed: {token_res.text}")
+            return JSONResponse(status_code=400, content={"error": "토큰 발급 실패"})
+
+        token_json = token_res.json()
+        id_token = token_json.get("id_token")
+        if not id_token:
+            return JSONResponse(status_code=400, content={"error": "토큰 없음"})
+
+    except Exception as e:
+        logger.error(f"Apple token request failed: {str(e)}")
+        return JSONResponse(status_code=502, content={"error": "Apple 서버 오류"})
+
+    # 사용자 정보 조회 (구글과 달리 id_token 디코딩으로 바로 획득, 별도 API 호출 없음)
+    try:
+        user_info = await _verify_apple_token(id_token)
+    except Exception as e:
+        logger.error(f"Apple token verify failed: {str(e)}")
+        return JSONResponse(status_code=400, content={"error": "사용자 정보 조회 실패"})
+
+    provider_id = user_info.get("sub")
+
+    try:
+        social_account = db.query(SocialAccount).filter(
+            SocialAccount.provider == 'apple',
+            SocialAccount.provider_id == str(provider_id)
+        ).first()
+
+        if not social_account:
+            member = Member()
+            db.add(member)
+            db.flush()
+
+            social = SocialAccount(
+                member_id=member.id,
+                provider='apple',
+                provider_id=provider_id
+            )
+            db.add(social)
+            db.commit()
+
+            temp_token = encode_temp_signup_token(member.id)
+
+            res = JSONResponse(content={"success": True, "redirect": "signup"})  # ← 변경
+            res.set_cookie(key="signup_token", value=temp_token, httponly=True, max_age=300)
+            return res
+
+        else:
+            member = db.query(Member).filter(Member.id == social_account.member_id).first()
+
+            if member.phone is None and member.name is None:
+                res = JSONResponse(content={"success": True, "redirect": "signup"})
+                return res
+
+            res = JSONResponse(content={"success": True, "redirect": "onboarding"})  # ← 변경
+            add_token_for_cookie(social_account.member_id, db, res)
+            return res
+
+    except Exception as e:
+        db.rollback()
+        logger.exception("Apple DB error")
+        return JSONResponse(status_code=500, content={"error": "DB 오류"})
+    
+def _create_apple_client_secret() -> str:
+    payload = {
+        "iss": APPLE_TEAM_ID,
+        "iat": int(time.time()),
+        "exp": int(time.time()) + 86400 * 180,  # 최대 6개월
+        "aud": "https://appleid.apple.com",
+        "sub": APPLE_CLIENT_ID,
+    }
+    return jwt.encode(
+        payload,
+        APPLE_PRIVATE_KEY,   # .p8 파일 내용 (문자열)
+        algorithm="ES256",
+        headers={"kid": APPLE_KEY_ID}
+    )
+
+
+async def _verify_apple_token(id_token: str) -> dict:
+    # Apple 공개키 목록 조회
+    async with httpx.AsyncClient() as client:
+        res = await client.get("https://appleid.apple.com/auth/keys")
+    keys = res.json()["keys"]
+
+    # 토큰 헤더에서 kid 추출 후 매칭되는 공개키 선택
+    header = jwt.get_unverified_header(id_token)
+    public_key = None
+    for key in keys:
+        if key["kid"] == header["kid"]:
+            public_key = RSAAlgorithm.from_jwk(json.dumps(key))
+            break
+
+    if not public_key:
+        raise ValueError("Apple public key not found")
+
+    return jwt.decode(
+        id_token,
+        public_key,
+        algorithms=["RS256"],
+        audience=APPLE_CLIENT_ID,
+    )
+# ===================================================== 애플 로그인 ===================================================== #

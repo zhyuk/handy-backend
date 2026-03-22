@@ -20,7 +20,7 @@ async def lifespan(app: FastAPI):
     yield
     print("서버 종료 중...")
 
-app = FastAPI(title="handy", lifespan=lifespan)
+app = FastAPI(title="handy", lifespan=lifespan, redirect_slashes=False)
 
 # ===== ROUTER ===== #
 app.include_router(auth.router)
@@ -36,13 +36,14 @@ origins = [
     "http://10.0.2.2",
     "http://10.0.2.2:8000",
     "http://localhost",
+    "https://local.handy.com",
 ]
 
 
 app.add_middleware(
     CORSMiddleware,
-    # allow_origins=origins,    # 배포할 때 허용한 URL만 접속하도록 처리
-    allow_origins=["*"],
+    allow_origins=origins,    # 배포할 때 허용한 URL만 접속하도록 처리
+    # allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

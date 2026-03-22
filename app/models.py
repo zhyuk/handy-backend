@@ -57,3 +57,19 @@ class Store(Base):
     number = Column(String(20), nullable=False)
     image = Column(Text, nullable=False)
     radius = Column(Integer, nullable=True)
+
+class BusinessRequest(Base):
+    __tablename__ = "business_requests"
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    name = Column(String(100), nullable=False)
+    address = Column(String(255), nullable=False)
+    addressDetail = Column(String(255), nullable=True)
+    industry = Column(String(100), nullable=False)  # 업종
+    owner = Column(String(100), nullable=False)
+    number = Column(String(20), nullable=False)
+    image = Column(Text, nullable=False)
+    created_at = Column(DateTime, server_default=func.now())
+    is_checked = Column(Boolean, default=False) # 승인 여부
+    checked_time = Column(DateTime, onupdate=func.now())  # 승인 시간
+    reject_reason = Column(Text)
