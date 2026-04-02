@@ -21,22 +21,14 @@ router = APIRouter(prefix="/api/owner", tags=["소셜 로그인 관리"])
 
 # === 사업자등록증 파일 저장 로직 === #
 UPLOAD_DIR = "uploads/business_registractions/"
-async def save_business_image(image: UploadFile) -> str:
-        # 디렉토리 없으면 생성
-        os.makedirs(UPLOAD_DIR, exist_ok=True)
-
-        # 확장자 가져오기
-        ext = os.path.splitext(image.filename)[1]
-
-        # 새 파일이름 생성
-        new_filename = f"{uuid.uuid4()}{ext}"
-
-        file_path = os.path.join(UPLOAD_DIR, new_filename)
-
-        with open(file_path, "wb") as f:
-            f.write(await image.read())
-
-        return new_filename
+async def prepare_business_image(image: UploadFile):
+    ext = os.path.splitext(image.filename)[1]
+    new_filename = f"{uuid.uuid4()}{ext}"
+    file_path = os.path.join(UPLOAD_DIR, new_filename)
+    
+    # 파일 내용을 메모리에 읽어둡니다.
+    content = await image.read()
+    return new_filename, file_path, content
 
  # ===================================================== 사업자번호 조회 ===================================================== #
 @router.get("/business/{bno}")
@@ -83,16 +75,26 @@ async def add_store_request(
     ----------------------------------------
     """
     # print(storeName, address, addressDetail, businessType, ownerName, ownerPhone, image)
-    file_name = await save_business_image(image)
+    file_name, file_path, content = await prepare_business_image(image)
+    try:
+        request = BusinessRequest(
+            name = storeName,
+            address = address,
+            addressDetail = addressDetail,
+            industry = businessType,
+            owner = ownerName,
+            number = ownerPhone,
+            image = file_name,
+        )
+        db.add(request)
 
-    request = BusinessRequest(
-        name = storeName,
-        address = address,
-        addressDetail = addressDetail,
-        industry = businessType,
-        owner = ownerName,
-        number = ownerPhone,
-        image = file_name
-    )
-    db.add(request)
-    db.commit()
+        db.commit()
+        db.refresh(request)
+    
+        os.makedirs(UPLOAD_DIR, exist_ok=True)
+        with open(file_path, "wb") as f:
+            f.write(content)
+    
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail="데이터 저장 중 오류가 발생했습니다.")
