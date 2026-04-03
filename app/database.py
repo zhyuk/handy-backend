@@ -31,6 +31,8 @@ def create_tables():
     print("DB 연결 성공")
     insert_dummy_store()
     insert_test_member()
+    insert_dumy_employee()
+    insert_dumy_todo()
 
 def insert_dummy_store():
     from models import Store
@@ -89,6 +91,61 @@ def insert_test_member():
 
     except Exception as e:
         print(f"계정 생성 중 에러 발생: {e}")
+        db.rollback()
+    finally:
+        db.close()
+
+def insert_dumy_employee():
+    from models import StoreMembers
+
+    db = SessionLocal()
+
+    try:
+        dumy_emp = db.query(StoreMembers).filter(StoreMembers.id == 1, StoreMembers.store_id == 1, StoreMembers.member_id == 1).first()
+
+        if not dumy_emp:
+            emp = StoreMembers(
+                store_id = 1,
+                member_id = 1,
+                bank = "농협은행",
+                accountNumber = "3521234123456"                
+            )
+
+            db.add(emp)
+            db.commit()
+            print("테스트용 직원 생성 완료")
+        else:
+            print("테스트용 직원이 이미 존재합니다.")
+
+    except Exception as e:
+        print(f"직원 생성 중 에러 발생: {e}")
+        db.rollback()
+    finally:
+        db.close()
+
+def insert_dumy_todo():
+    from models import StoreMembersTodo
+
+    db = SessionLocal()
+
+    try:
+        dumy_todo = db.query(StoreMembersTodo).filter(StoreMembersTodo.id == 1, StoreMembersTodo.store_id == 1, StoreMembersTodo.employee_id == 1).first()
+
+        if not dumy_todo:
+            todo = StoreMembersTodo(
+                store_id = 1,
+                employee_id = 1,
+                content = "쓰레기 치워라"                
+            )
+
+            db.add(todo)
+            db.commit()
+            print("테스트용 체크리스트 생성 완료")
+        else:
+            print("테스트용 체크리스트가 이미 존재합니다.")
+
+    except Exception as e:
+        print(f"체크리스트 생성 중 에러 발생: {e}")
         db.rollback()
     finally:
         db.close()

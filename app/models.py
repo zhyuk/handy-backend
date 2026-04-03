@@ -1,8 +1,10 @@
-from sqlalchemy import  Column, Integer, BigInteger, String, Text, Boolean, DateTime, ForeignKey, func, Date, UniqueConstraint, Numeric
+from sqlalchemy import Column, Integer, BigInteger, String, Text, Boolean, DateTime, ForeignKey, func, Date, UniqueConstraint, Numeric, Time, JSON
 from sqlalchemy.orm import relationship
 from database import Base
-from database import SessionLocal
 
+# ==========================================
+# 1. 사용자 및 계정 관련
+# ==========================================
 class Member(Base):
     __tablename__ = "members"
 
@@ -15,9 +17,10 @@ class Member(Base):
     image_url = Column(String(255), default="default.png")
     is_deleted = Column(Boolean, default=False)
 
+    # Relationships
     social_accounts = relationship("SocialAccount", back_populates="member", cascade="all, delete-orphan")
     tokens = relationship("JwtTokens", back_populates="member", cascade="all, delete-orphan")
-    members_for_storeMembers = relationship("StoreMembers", back_populates="members_to_storeMember", cascade="all, delete-orphan")
+    members_for_storeMembers = relationship("StoreMembers", back_populates="member", cascade="all, delete-orphan")
     member_requests = relationship("MemberRequest", back_populates="member", cascade="all, delete-orphan")
 
 class SocialAccount(Base):
@@ -28,10 +31,7 @@ class SocialAccount(Base):
     provider = Column(String(20), nullable=False)   # google/kakao/apple
     provider_id = Column(String(255), nullable=False)
 
-    __table_args__ = (
-        UniqueConstraint("provider", "provider_id"),
-    )
-
+    __table_args__ = (UniqueConstraint("provider", "provider_id"),)
     member = relationship("Member", back_populates="social_accounts")
 
 class JwtTokens(Base):
@@ -46,6 +46,9 @@ class JwtTokens(Base):
 
     member = relationship("Member", back_populates="tokens")
 
+# ==========================================
+# 2. 매장 및 지도 관련
+# ==========================================
 class Store(Base):
     __tablename__ = "stores"
 
@@ -54,28 +57,32 @@ class Store(Base):
     name = Column(String(100), nullable=False)
     address = Column(String(255), nullable=False)
     addressDetail = Column(String(255), nullable=True)
-    industry = Column(String(100), nullable=False)  # 업종
+    industry = Column(String(100), nullable=False)
     owner = Column(String(100), nullable=False)
     number = Column(String(20), nullable=False)
     image = Column(Text, nullable=False)
     radius = Column(Integer, nullable=True)
 
-    # 관계 설정
+    # Relationships
     map_info = relationship("StoreMap", back_populates="store", cascade="all, delete-orphan")
-    stores_for_storeMembers = relationship("StoreMembers", back_populates="stores_to_storeMember", cascade="all, delete-orphan")
+    stores_for_storeMembers = relationship("StoreMembers", back_populates="store", cascade="all, delete-orphan")
     member_requests = relationship("MemberRequest", back_populates="store", cascade="all, delete-orphan")
+    community_posts = relationship("StoreCommunity", back_populates="store", cascade="all, delete-orphan")
+    all_todos = relationship("StoreMembersTodo", back_populates="store", cascade="all, delete-orphan")
 
 class StoreMap(Base):
     __tablename__ = "store_maps"
 
     id = Column(BigInteger, primary_key=True, autoincrement=True)
     store_id = Column(BigInteger, ForeignKey("stores.id"), nullable=False)
-    # 위도 (Latitude): 전체 10자리, 소수점 이하 7자리
     lat = Column(Numeric(precision=10, scale=7), nullable=False)
-    # 경도 (Longitude): 전체 11자리(180도 때문), 소수점 이하 7자리
     lng = Column(Numeric(precision=11, scale=7), nullable=False)
 
     store = relationship("Store", back_populates="map_info")
+
+# ==========================================
+# 3. 가입 및 승인 프로세스
+# ==========================================
 class BusinessRequest(Base):
     __tablename__ = "business_requests"
 
@@ -83,15 +90,33 @@ class BusinessRequest(Base):
     name = Column(String(100), nullable=False)
     address = Column(String(255), nullable=False)
     addressDetail = Column(String(255), nullable=True)
-    industry = Column(String(100), nullable=False)  # 업종
+    industry = Column(String(100), nullable=False)
     owner = Column(String(100), nullable=False)
     number = Column(String(20), nullable=False)
     image = Column(Text, nullable=False)
     created_at = Column(DateTime, server_default=func.now())
-    is_checked = Column(Boolean, default=False) # 승인 여부
-    checked_time = Column(DateTime, onupdate=func.now())  # 승인 시간
+    is_checked = Column(Boolean, default=False)
+    checked_time = Column(DateTime, onupdate=func.now())
     reject_reason = Column(Text)
 
+class MemberRequest(Base):
+    __tablename__ = "member_requests"
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    store_id = Column(BigInteger, ForeignKey("stores.id"), nullable=False)
+    member_id = Column(BigInteger, ForeignKey("members.id"), nullable=False)
+    bank = Column(String(50))
+    accountName = Column(String(100))
+    accountNumber = Column(String(100))
+    status = Column(String(10), server_default="pending")
+    created_at = Column(DateTime, server_default=func.now())
+
+    store = relationship("Store", back_populates="member_requests")
+    member = relationship("Member", back_populates="member_requests")
+
+# ==========================================
+# 4. 소속 직원 및 상세 관리
+# ==========================================
 class StoreMembers(Base):
     __tablename__ = "store_members"
 
@@ -100,22 +125,27 @@ class StoreMembers(Base):
     member_id = Column(BigInteger, ForeignKey("members.id"), nullable=False)
     bank = Column(String(50), nullable=False)
     accountNumber = Column(String(100), nullable=False)
-    joined_at = Column(Date, server_default=func.now())
+    joined_at = Column(DateTime, server_default=func.now())
 
-    # "members" -> "Member", "stores" -> "Store"로 수정
-    members_to_storeMember = relationship("Member", back_populates="members_for_storeMembers")
-    stores_to_storeMember = relationship("Store", back_populates="stores_for_storeMembers")
+    # 기본 관계
+    member = relationship("Member", back_populates="members_for_storeMembers")
+    store = relationship("Store", back_populates="stores_for_storeMembers")
     
-    # 상세 정보와 1:1 관계
+    # 직원 상세 및 업무 데이터
     detail = relationship("StoreMembersDetail", back_populates="store_member", uselist=False, cascade="all, delete-orphan")
-
+    todos = relationship("StoreMembersTodo", back_populates="employee", cascade="all, delete-orphan")
+    work_schedules = relationship("StoreMembersWork", back_populates="employee", cascade="all, delete-orphan")
+    work_logs = relationship("StoreMembersWorkLog", back_populates="employee", cascade="all, delete-orphan")
+    
+    # 커뮤니티 활동 (작성한 글/댓글)
+    community_posts = relationship("StoreCommunity", back_populates="author")
+    comments = relationship("StoreCommunityComment", back_populates="author")
 
 class StoreMembersDetail(Base):
     __tablename__ = "store_members_detail"
 
     id = Column(BigInteger, primary_key=True, autoincrement=True)
     store_member_id = Column(BigInteger, ForeignKey("store_members.id"), nullable=False)
-    
     employee_type = Column(String(20))
     salary_cycle = Column(String(10))
     salary_day = Column(String(20))
@@ -136,20 +166,79 @@ class StoreMembersDetail(Base):
 
     store_member = relationship("StoreMembers", back_populates="detail")
 
-class MemberRequest(Base):
-    __tablename__ = "member_requests"
+# ==========================================
+# 5. 근태 및 업무 관련
+# ==========================================
+class StoreMembersTodo(Base):
+    __tablename__ = "store_members_todo"
 
     id = Column(BigInteger, primary_key=True, autoincrement=True)
     store_id = Column(BigInteger, ForeignKey("stores.id"), nullable=False)
-    member_id = Column(BigInteger, ForeignKey("members.id"), nullable=False)
-    
-    bank = Column(String(50))
-    accountName = Column(String(100))
-    accountNumber = Column(String(100))
-    
-    status = Column(String(10), server_default="pending")   # 결과(pending / approved / rejected)
+    employee_id = Column(BigInteger, ForeignKey("store_members.id"), nullable=False)
+    content = Column(String(100), nullable=False)
+    is_achieved = Column(Boolean, server_default="false")
+
+    store = relationship("Store", back_populates="all_todos")
+    employee = relationship("StoreMembers", back_populates="todos")
+
+class StoreMembersWork(Base):
+    __tablename__ = "store_members_work"
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    store_id = Column(BigInteger, ForeignKey("stores.id"), nullable=False)
+    employee_id = Column(BigInteger, ForeignKey("store_members.id"), nullable=False)
+    day_of_week = Column(Integer, nullable=False)
+    work_start = Column(Time, nullable=False)
+    work_end = Column(Time, nullable=False)
+
+    employee = relationship("StoreMembers", back_populates="work_schedules")
+
+class StoreMembersWorkLog(Base):
+    __tablename__ = "store_members_work_logs"
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    store_id = Column(BigInteger, ForeignKey("stores.id"), nullable=False)
+    employee_id = Column(BigInteger, ForeignKey("store_members.id"), nullable=False)
+    work_date = Column(Date, nullable=False)
+    start_time = Column(Time, nullable=False)
+    end_time = Column(Time, nullable=True)
+    status = Column(String(20), server_default="active")
+
+    employee = relationship("StoreMembers", back_populates="work_logs")
+
+# ==========================================
+# 6. 매장 커뮤니티 (게시판)
+# ==========================================
+class StoreCommunity(Base):
+    __tablename__ = "store_community"
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    store_id = Column(BigInteger, ForeignKey("stores.id"), nullable=False)
+    employee_id = Column(BigInteger, ForeignKey("store_members.id", ondelete="SET NULL"), nullable=True)
+    category = Column(String(20), nullable=False, index=True)
+    title = Column(String(100), nullable=False)
+    content = Column(Text, nullable=False)
+    image = Column(JSON)
+    view_count = Column(Integer, default=0)
     created_at = Column(DateTime, server_default=func.now())
 
-    # 관계 설정 (N:1)
-    store = relationship("Store", back_populates="member_requests")
-    member = relationship("Member", back_populates="member_requests")
+    store = relationship("Store", back_populates="community_posts")
+    author = relationship("StoreMembers", back_populates="community_posts")
+    comments = relationship("StoreCommunityComment", back_populates="community", cascade="all, delete-orphan")
+
+class StoreCommunityComment(Base):
+    __tablename__ = "store_community_comment"
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    community_id = Column(BigInteger, ForeignKey("store_community.id", ondelete="CASCADE"), nullable=False)
+    employee_id = Column(BigInteger, ForeignKey("store_members.id", ondelete="SET NULL"), nullable=True)
+    parent_id = Column(BigInteger, ForeignKey("store_community_comment.id"), nullable=True)
+    content = Column(Text, nullable=False)
+    created_at = Column(DateTime, server_default=func.now())
+
+    community = relationship("StoreCommunity", back_populates="comments")
+    author = relationship("StoreMembers", back_populates="comments")
+    
+    # 대댓글 셀프 참조 관계
+    parent = relationship("StoreCommunityComment", remote_side=[id], back_populates="replies")
+    replies = relationship("StoreCommunityComment", back_populates="parent", cascade="all, delete-orphan")

@@ -2,14 +2,16 @@ import os
 import httpx
 import json
 from fastapi import APIRouter, Depends, Query, Cookie, HTTPException, Response, UploadFile, File, Form
+from sqlalchemy import asc
 from sqlalchemy.orm import Session
 from pathlib import Path
 from dotenv import load_dotenv
 import uuid
+from datetime import datetime
 
-from models import Store, StoreMap, MemberRequest
+from models import Member, Store, StoreMap, MemberRequest, StoreMembers, StoreMembersTodo, StoreMembersWork, StoreCommunity
 from database import get_db
-from schemas.employee import VerifyCode, MemberRequestSchemas
+from schemas.employee import VerifyCode, MemberRequestSchemas, TodoListRequest, TodoListResponse, TodoListModifyRequest, WorkRequest, WrokResponse, NoticeResponse
 from utils.uitls import format_phone_number, get_coords_from_address
 
 
@@ -88,3 +90,113 @@ async def add_member_request(req: MemberRequestSchemas, db: Session = Depends(ge
         db.rollback()
         raise HTTPException(status_code=500, detail="데이터 저장 중 오류가 발생했습니다.")
 # ======= 가입신청 하기 ======= #
+
+# ======= 본인 근무일정 조회 ======= #
+@router.post("/work", response_model=WrokResponse)
+async def get_today_work(req: WorkRequest, db: Session = Depends(get_db)):
+    """
+    ----------------------------------------
+    개인별 근무일정 조회 API 
+
+    * 오늘 기준 근무일정 조회
+    ----------------------------------------
+    """
+    # print(req)
+    today_weekday = datetime.now().weekday()
+    print("today_weekday:" , today_weekday)
+
+    try:
+        today_work = db.query(StoreMembersWork).filter(StoreMembersWork.employee_id == req.employee_id, StoreMembersWork.day_of_week == today_weekday).first()
+
+        if not today_work:
+            raise HTTPException(status_code=404, detail="오늘 예정된 근무 일정이 없습니다.")
+        
+        return today_work
+    
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail="근무 일정 조회 중 서버 오류가 발생했습니다.")
+# ======= 본인 근무일정 조회 ======= #
+
+@router.post("/todo", response_model=list[TodoListResponse])
+async def get_todo_list(req: TodoListRequest, db: Session = Depends(get_db)):
+    """
+    ----------------------------------------
+    체크리스트 조회 API
+    ----------------------------------------
+    """
+    print(req)
+
+    try:
+        todoList = db.query(StoreMembersTodo).filter(StoreMembersTodo.store_id == 1, StoreMembersTodo.employee_id == 1).order_by(asc(StoreMembersTodo.is_achieved)).all()
+        
+
+        return todoList
+    
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail="데이터 저장 중 오류가 발생했습니다.")
+    
+@router.post("/todo/modify", response_model=list[TodoListResponse])
+async def modify_todo(req: TodoListModifyRequest, db: Session = Depends(get_db)):
+    """
+    ----------------------------------------
+    체크리스트 상태변경 API
+    ----------------------------------------
+    """
+    print(req)
+
+    try:
+        modify_todo = db.query(StoreMembersTodo).filter(StoreMembersTodo.store_id == req.store_id, StoreMembersTodo.id == req.id).first()
+
+        modify_todo.is_achieved = not modify_todo.is_achieved
+
+        db.add(modify_todo)
+        db.commit()
+
+        todoList = db.query(StoreMembersTodo).filter(StoreMembersTodo.store_id == 1, StoreMembersTodo.employee_id == 1).order_by(asc(StoreMembersTodo.is_achieved)).all()
+
+        return todoList
+    
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail="데이터 저장 중 오류가 발생했습니다.")
+    
+# ======= 공지사항 리턴 ======= #
+@router.post("/notice", response_model=list[NoticeResponse])
+async def get_notice_list(req: TodoListRequest, db: Session = Depends(get_db)):
+    """
+    ----------------------------------------
+    매장별 공지사항 리턴 API
+
+    * 최신 2개 공지사항만 리턴
+    ----------------------------------------
+    """
+    # print(req)
+
+    try:
+        notices = (
+            db.query(StoreCommunity, Member.name)
+            .join(StoreMembers, StoreMembers.id == StoreCommunity.employee_id)
+            .join(Member, Member.id == StoreMembers.member_id)
+            .filter(StoreCommunity.store_id == req.store_id)
+            .order_by(asc(StoreCommunity.created_at))
+            .limit(2)
+            .all()
+        )
+
+        result = []
+        for notice, author_name in notices:
+            result.append({
+                "writer": author_name,
+                "content": notice.content,
+                "created_at": notice.created_at,
+            })
+
+        return result
+
+        return result
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail="공지사항 로드 중 서버 오류가 발생했습니다.")
+# ======= 공지사항 리턴 ======= #
