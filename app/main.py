@@ -4,8 +4,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 from database import create_tables
 import os
+from fastapi.staticfiles import StaticFiles
 
-from routers import community, auth, owner, employee
+
+from routers import community, auth, owner, employee, public
 
 import firebase_init
 from firebase_admin import messaging
@@ -22,11 +24,14 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="handy", lifespan=lifespan, redirect_slashes=False)
 
+app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
+
 # ===== ROUTER ===== #
 app.include_router(auth.router)
 app.include_router(owner.router)
 app.include_router(employee.router)
 app.include_router(community.router)
+app.include_router(public.router)
 
 
 # ===== CORS ===== #

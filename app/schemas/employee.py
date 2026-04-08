@@ -48,9 +48,22 @@ class TodoListModifyRequest(TodoListRequest):
     id: int
 
 class NoticeResponse(BaseModel):
+    id: int
     writer: str
-    content: str
+    title: str
     created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+class WeeklyWorkRequest(BaseModel):
+    store_id: int
+    employee_id: int
+
+class WeeklyWorkResponse(BaseModel):
+    day_of_week: int
+    work_start: time
+    work_end: time
 
     class Config:
         from_attributes = True

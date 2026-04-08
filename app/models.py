@@ -123,8 +123,9 @@ class StoreMembers(Base):
     id = Column(BigInteger, primary_key=True, autoincrement=True)
     store_id = Column(BigInteger, ForeignKey("stores.id"), nullable=False)
     member_id = Column(BigInteger, ForeignKey("members.id"), nullable=False)
-    bank = Column(String(50), nullable=False)
-    accountNumber = Column(String(100), nullable=False)
+    role = Column(String(10), server_default="employee")
+    bank = Column(String(50), nullable=True)
+    accountNumber = Column(String(100), nullable=True)
     joined_at = Column(DateTime, server_default=func.now())
 
     # 기본 관계
@@ -221,6 +222,7 @@ class StoreCommunity(Base):
     image = Column(JSON)
     view_count = Column(Integer, default=0)
     created_at = Column(DateTime, server_default=func.now())
+    is_deleted = Column(Boolean, server_default="false")
 
     store = relationship("Store", back_populates="community_posts")
     author = relationship("StoreMembers", back_populates="community_posts")
@@ -235,6 +237,7 @@ class StoreCommunityComment(Base):
     parent_id = Column(BigInteger, ForeignKey("store_community_comment.id"), nullable=True)
     content = Column(Text, nullable=False)
     created_at = Column(DateTime, server_default=func.now())
+    is_deleted = Column(Boolean, server_default="false")
 
     community = relationship("StoreCommunity", back_populates="comments")
     author = relationship("StoreMembers", back_populates="comments")

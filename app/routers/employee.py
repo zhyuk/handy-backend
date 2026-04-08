@@ -2,16 +2,16 @@ import os
 import httpx
 import json
 from fastapi import APIRouter, Depends, Query, Cookie, HTTPException, Response, UploadFile, File, Form
-from sqlalchemy import asc
+from sqlalchemy import asc, extract
 from sqlalchemy.orm import Session
 from pathlib import Path
 from dotenv import load_dotenv
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta
 
-from models import Member, Store, StoreMap, MemberRequest, StoreMembers, StoreMembersTodo, StoreMembersWork, StoreCommunity
+from models import Member, Store, StoreMap, MemberRequest, StoreMembers, StoreMembersTodo, StoreMembersWork, StoreCommunity, StoreMembersWorkLog, StoreMembersDetail
 from database import get_db
-from schemas.employee import VerifyCode, MemberRequestSchemas, TodoListRequest, TodoListResponse, TodoListModifyRequest, WorkRequest, WrokResponse, NoticeResponse
+from schemas.employee import VerifyCode, MemberRequestSchemas, TodoListRequest, TodoListResponse, TodoListModifyRequest, WorkRequest, WrokResponse, NoticeResponse, WeeklyWorkRequest, WeeklyWorkResponse
 from utils.uitls import format_phone_number, get_coords_from_address
 
 
@@ -92,7 +92,7 @@ async def add_member_request(req: MemberRequestSchemas, db: Session = Depends(ge
 # ======= 가입신청 하기 ======= #
 
 # ======= 본인 근무일정 조회 ======= #
-@router.post("/work", response_model=WrokResponse)
+@router.post("/work/today", response_model=WrokResponse)
 async def get_today_work(req: WorkRequest, db: Session = Depends(get_db)):
     """
     ----------------------------------------
@@ -118,6 +118,7 @@ async def get_today_work(req: WorkRequest, db: Session = Depends(get_db)):
         raise HTTPException(status_code=500, detail="근무 일정 조회 중 서버 오류가 발생했습니다.")
 # ======= 본인 근무일정 조회 ======= #
 
+# ======= 체크리스트 조회 ======= #
 @router.post("/todo", response_model=list[TodoListResponse])
 async def get_todo_list(req: TodoListRequest, db: Session = Depends(get_db)):
     """
@@ -136,7 +137,9 @@ async def get_todo_list(req: TodoListRequest, db: Session = Depends(get_db)):
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=500, detail="데이터 저장 중 오류가 발생했습니다.")
-    
+# ======= 체크리스트 조회 ======= #    
+
+# ======= 체크리스트 상태변경 ======= #
 @router.post("/todo/modify", response_model=list[TodoListResponse])
 async def modify_todo(req: TodoListModifyRequest, db: Session = Depends(get_db)):
     """
@@ -161,7 +164,8 @@ async def modify_todo(req: TodoListModifyRequest, db: Session = Depends(get_db))
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=500, detail="데이터 저장 중 오류가 발생했습니다.")
-    
+# ======= 체크리스트 상태변경 ======= #
+
 # ======= 공지사항 리턴 ======= #
 @router.post("/notice", response_model=list[NoticeResponse])
 async def get_notice_list(req: TodoListRequest, db: Session = Depends(get_db)):
@@ -179,7 +183,7 @@ async def get_notice_list(req: TodoListRequest, db: Session = Depends(get_db)):
             db.query(StoreCommunity, Member.name)
             .join(StoreMembers, StoreMembers.id == StoreCommunity.employee_id)
             .join(Member, Member.id == StoreMembers.member_id)
-            .filter(StoreCommunity.store_id == req.store_id)
+            .filter(StoreCommunity.store_id == req.store_id, StoreCommunity.category == "공지사항")
             .order_by(asc(StoreCommunity.created_at))
             .limit(2)
             .all()
@@ -188,15 +192,122 @@ async def get_notice_list(req: TodoListRequest, db: Session = Depends(get_db)):
         result = []
         for notice, author_name in notices:
             result.append({
+                "id": notice.id,
                 "writer": author_name,
-                "content": notice.content,
+                "title": notice.title,
                 "created_at": notice.created_at,
             })
 
         return result
 
-        return result
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=500, detail="공지사항 로드 중 서버 오류가 발생했습니다.")
 # ======= 공지사항 리턴 ======= #
+
+# ======= 이번주 근무일정 조회 ======= #
+@router.post("/work")
+async def get_weekly_work(req: WeeklyWorkRequest, db: Session = Depends(get_db)):
+    """
+    ----------------------------------------
+    이번주 근무일정 조회 API
+    ----------------------------------------
+    """
+    print("req:", req)
+
+    try:
+        weeklyWork = db.query(StoreMembersWork).filter(StoreMembersWork.employee_id == req.employee_id, StoreMembersWork.store_id == req.store_id).all()
+
+        return weeklyWork
+
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail="공지사항 로드 중 서버 오류가 발생했습니다.")
+# ======= 이번주 근무일정 조회 ======= #
+
+# ======= 이번달 급여 조회 ======= #
+@router.post("/salary/preview")
+async def get_weekly_work(req: WeeklyWorkRequest, db: Session = Depends(get_db)):
+    """
+    ----------------------------------------
+    이번달 급여 조회 API
+
+    * 근무시간 기준 실시간 반영
+    ----------------------------------------
+    """
+    print("req:", req)
+
+    req.employee_id = 1
+    req.store_id = 1
+
+    try:
+        year = datetime.now().year
+        month = datetime.now().month
+
+        # 이번달 완료된 근무 로그 조회 (end_time이 있는 것만)
+        logs = db.query(StoreMembersWorkLog).filter(
+            StoreMembersWorkLog.employee_id == req.employee_id,
+            StoreMembersWorkLog.store_id == req.store_id,
+            StoreMembersWorkLog.end_time.isnot(None),
+            extract('year', StoreMembersWorkLog.work_date) == year,
+            extract('month', StoreMembersWorkLog.work_date) == month,
+        ).all()
+
+        # 시급 조회
+        detail = db.query(StoreMembersDetail).filter(
+            StoreMembersDetail.store_member_id == req.employee_id
+        ).first()
+
+        if not detail or not detail.hourly_rate:
+            raise HTTPException(status_code=404, detail="시급 정보가 없습니다.")
+
+        hourly_rate = detail.hourly_rate
+
+        total_seconds = 0
+        overtime_seconds = 0
+
+        for log in logs:
+            dow = log.work_date.weekday()
+            dow_sunday_based = (dow + 1) % 7
+
+            schedule = db.query(StoreMembersWork).filter(
+                StoreMembersWork.employee_id == req.employee_id,
+                StoreMembersWork.store_id == req.store_id,
+                StoreMembersWork.day_of_week == dow_sunday_based,
+            ).first()
+
+            if not schedule:
+                continue
+
+            scheduled_start = datetime.combine(log.work_date, schedule.work_start)
+            scheduled_end = datetime.combine(log.work_date, schedule.work_end)
+            actual_end = datetime.combine(log.work_date, log.end_time)
+            overtime_threshold = scheduled_end + timedelta(minutes=30)
+
+            # 기본 근무시간은 예정 기준으로 고정
+            base_seconds = (scheduled_end - scheduled_start).total_seconds()
+            total_seconds += base_seconds
+
+            # 초과근무는 예정 퇴근 +30분 이후 실제 퇴근까지
+            if actual_end > overtime_threshold:
+                overtime_seconds += (actual_end - overtime_threshold).total_seconds()
+
+        total_hours = total_seconds / 3600
+        overtime_hours = overtime_seconds / 3600
+
+        # 기본 급여 + 초과 수당 (시급의 0.5배 추가)
+        base_salary = int(total_hours * hourly_rate)
+        overtime_pay = int(overtime_hours * hourly_rate * 0.5)
+        estimated_salary = base_salary + overtime_pay
+
+        return {
+            "total_hours": round(total_hours, 2),
+            "estimated_salary": estimated_salary,
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail="급여 조회 중 오류가 발생했습니다.")
+# ======= 이번주 근무일정 조회 ======= #
