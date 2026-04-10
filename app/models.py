@@ -80,6 +80,14 @@ class StoreMap(Base):
 
     store = relationship("Store", back_populates="map_info")
 
+class StorePart(Base):
+    __tablename__ = "store_parts"
+    
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    store_id = Column(BigInteger, ForeignKey("stores.id"), nullable=False)
+    name = Column(String(20), nullable=False)   # "오픈", "미들", "마감"
+    start_time = Column(Time, nullable=False)
+    end_time = Column(Time, nullable=False)
 # ==========================================
 # 3. 가입 및 승인 프로세스
 # ==========================================
@@ -188,11 +196,15 @@ class StoreMembersWork(Base):
     id = Column(BigInteger, primary_key=True, autoincrement=True)
     store_id = Column(BigInteger, ForeignKey("stores.id"), nullable=False)
     employee_id = Column(BigInteger, ForeignKey("store_members.id"), nullable=False)
+    part_id = Column(BigInteger, ForeignKey("store_parts.id"), nullable=True)
     day_of_week = Column(Integer, nullable=False)
-    work_start = Column(Time, nullable=False)
-    work_end = Column(Time, nullable=False)
+    work_date = Column(Date, nullable=False)
+    work_start = Column(Time, nullable=True)
+    work_end = Column(Time, nullable=True)
+    is_holiday = Column(Boolean, server_default="false")
 
     employee = relationship("StoreMembers", back_populates="work_schedules")
+    part = relationship("StorePart")
 
 class StoreMembersWorkLog(Base):
     __tablename__ = "store_members_work_logs"

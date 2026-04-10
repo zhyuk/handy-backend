@@ -2,16 +2,16 @@ import os
 import httpx
 import json
 from fastapi import APIRouter, Depends, Query, Cookie, HTTPException, Response, UploadFile, File, Form
-from sqlalchemy import asc, extract
-from sqlalchemy.orm import Session
+from sqlalchemy import asc, extract, text
+from sqlalchemy.orm import Session, joinedload
 from pathlib import Path
 from dotenv import load_dotenv
 import uuid
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, date
 
 from models import Member, Store, StoreMap, MemberRequest, StoreMembers, StoreMembersTodo, StoreMembersWork, StoreCommunity, StoreMembersWorkLog, StoreMembersDetail
 from database import get_db
-from schemas.employee import VerifyCode, MemberRequestSchemas, TodoListRequest, TodoListResponse, TodoListModifyRequest, WorkRequest, WrokResponse, NoticeResponse, WeeklyWorkRequest, WeeklyWorkResponse
+from schemas.employee import VerifyCode, MemberRequestSchemas, TodoListRequest, TodoListResponse, TodoListModifyRequest, WorkRequest, WrokResponse, NoticeResponse, WeeklyWorkRequest, WeeklyWorkResponse, MonthlyScheduleRequest
 from utils.uitls import format_phone_number, get_coords_from_address
 
 
@@ -311,3 +311,113 @@ async def get_weekly_work(req: WeeklyWorkRequest, db: Session = Depends(get_db))
         db.rollback()
         raise HTTPException(status_code=500, detail="급여 조회 중 오류가 발생했습니다.")
 # ======= 이번주 근무일정 조회 ======= #
+
+# ======= 일정 조회 ======= #
+@router.get("/schedule/{store_id}/detail")
+def get_all_schedule_detail(store_id: int, year: int, month: int, day: int, db: Session = Depends(get_db)):
+    """
+    ----------------------------------------
+    요일별 전체 직원 스케줄 조회 API
+    ----------------------------------------
+    """
+    print(year, month, day)
+
+    target_date = date(year, month, day)
+
+    schedules = db.query(StoreMembersWork).options(
+        joinedload(StoreMembersWork.part),
+        joinedload(StoreMembersWork.employee).joinedload(StoreMembers.member)  # ← 체인
+    ).filter(
+        StoreMembersWork.store_id == store_id,
+        StoreMembersWork.work_date == target_date,
+        StoreMembersWork.is_holiday == False,
+    ).all()
+
+    # part_id 기준으로 그룹핑
+    part_map: dict = {}
+    for s in schedules:
+        if not s.part:
+            continue
+        pid = s.part.id
+        if pid not in part_map:
+            part_map[pid] = {
+                "part_id": s.part.id,
+                "part_name": s.part.name,
+                "start_time": str(s.part.start_time)[:5],
+                "end_time": str(s.part.end_time)[:5],
+                "employees": []
+            }
+        part_map[pid]["employees"].append({
+            "id": s.employee.id,
+            "name": s.employee.member.name
+        })
+
+    # start_time 기준 정렬
+    return sorted(part_map.values(), key=lambda x: x["start_time"])
+
+@router.get("/schedule/{store_id}/{employee_id}")
+async def get_schedule(store_id: int, employee_id: int, year: int, month: int, db: Session = Depends(get_db)):
+    """
+    ----------------------------------------
+    월별 개인 스케줄 조회 API
+    ----------------------------------------
+    """
+    from calendar import monthrange
+    from datetime import date
+
+    start_date = date(year, month, 1)
+    end_date = date(year, month, monthrange(year, month)[1])
+
+    schedules = db.query(StoreMembersWork).options(
+        joinedload(StoreMembersWork.part)  # StorePart relationship
+    ).filter(
+        StoreMembersWork.store_id == store_id,
+        StoreMembersWork.employee_id == employee_id,
+        StoreMembersWork.work_date >= start_date,
+        StoreMembersWork.work_date <= end_date,
+    ).all()
+
+    result = {}
+    for s in schedules:
+        key = f"{s.work_date.year}-{s.work_date.month}-{s.work_date.day}"
+        result[key] = {
+            "work_start": str(s.work_start)[:5] if s.work_start else None,
+            "work_end": str(s.work_end)[:5] if s.work_end else None,
+            "is_holiday": s.is_holiday,
+            "part_name": s.part.name if s.part else None
+        }
+    return result
+
+@router.get("/schedule/{store_id}")
+def get_all_schedule(store_id: int, year: int, month: int, db: Session = Depends(get_db)):
+    """
+    ----------------------------------------
+    월별 전체 직원 스케줄 조회 API
+    ----------------------------------------
+    """
+    from calendar import monthrange
+    from datetime import date
+
+    start_date = date(year, month, 1)
+    end_date = date(year, month, monthrange(year, month)[1])
+
+    schedules = db.query(StoreMembersWork).options(
+        joinedload(StoreMembersWork.part)
+    ).filter(
+        StoreMembersWork.store_id == store_id,
+        StoreMembersWork.is_holiday == False,
+        StoreMembersWork.work_date >= start_date,
+        StoreMembersWork.work_date <= end_date,
+    ).all()
+
+    summary: dict = {}
+    for s in schedules:
+        key = f"{s.work_date.year}-{s.work_date.month}-{s.work_date.day}"
+        if key not in summary:
+            summary[key] = {}
+        if s.part:
+            part_name = s.part.name
+            summary[key][part_name] = summary[key].get(part_name, 0) + 1
+
+    return summary
+# ======= 일정 조회 ======= #

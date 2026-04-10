@@ -67,3 +67,9 @@ class WeeklyWorkResponse(BaseModel):
 
     class Config:
         from_attributes = True
+
+    
+class MonthlyScheduleRequest(BaseModel):
+    store_id: int
+    employee_id: int
+    month: int
