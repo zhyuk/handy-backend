@@ -1,6 +1,8 @@
-from sqlalchemy import Column, Integer, BigInteger, String, Text, Boolean, DateTime, ForeignKey, func, Date, UniqueConstraint, Numeric, Time, JSON
+from sqlalchemy import Column, Integer, BigInteger, String, Text, Boolean, DateTime, ForeignKey, func, Date, UniqueConstraint, Numeric, Time, JSON, Enum
 from sqlalchemy.orm import relationship
 from database import Base
+import enum
+
 
 # ==========================================
 # 1. 사용자 및 계정 관련
@@ -69,6 +71,7 @@ class Store(Base):
     member_requests = relationship("MemberRequest", back_populates="store", cascade="all, delete-orphan")
     community_posts = relationship("StoreCommunity", back_populates="store", cascade="all, delete-orphan")
     all_todos = relationship("StoreMembersTodo", back_populates="store", cascade="all, delete-orphan")
+    closing_reports = relationship("DailyClosingReport", back_populates="store", cascade="all, delete-orphan")
 
 class StoreMap(Base):
     __tablename__ = "store_maps"
@@ -145,10 +148,13 @@ class StoreMembers(Base):
     todos = relationship("StoreMembersTodo", back_populates="employee", cascade="all, delete-orphan")
     work_schedules = relationship("StoreMembersWork", back_populates="employee", cascade="all, delete-orphan")
     work_logs = relationship("StoreMembersWorkLog", back_populates="employee", cascade="all, delete-orphan")
+    schedule_requests = relationship("ScheduleChangeRequest", back_populates="employee", cascade="all, delete-orphan")
     
     # 커뮤니티 활동 (작성한 글/댓글)
     community_posts = relationship("StoreCommunity", back_populates="author")
     comments = relationship("StoreCommunityComment", back_populates="author")
+
+    closing_reports = relationship("DailyClosingReport", back_populates="employee", cascade="all, delete-orphan")
 
 class StoreMembersDetail(Base):
     __tablename__ = "store_members_detail"
@@ -219,6 +225,27 @@ class StoreMembersWorkLog(Base):
 
     employee = relationship("StoreMembers", back_populates="work_logs")
 
+class ScheduleChangeRequest(Base):
+    __tablename__ = "schedule_change_requests"
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    store_id = Column(BigInteger, ForeignKey("stores.id"), nullable=False)
+    employee_id = Column(BigInteger, ForeignKey("store_members.id"), nullable=False)
+    type = Column(String(20), nullable=False)  # "schedule_change" | "vacation"
+    origin_date = Column(Date, nullable=True)
+    origin_start = Column(Time, nullable=True)
+    origin_end = Column(Time, nullable=True)
+    desired_date = Column(Date, nullable=False)
+    desired_start = Column(Time, nullable=True)
+    desired_end = Column(Time, nullable=True)
+    reason = Column(Text, nullable=False)
+    status = Column(String(10), server_default="pending")  # pending | approved | rejected
+    created_at = Column(DateTime, server_default=func.now())
+    is_deleted = Column(Boolean, server_default="false")
+
+    store = relationship("Store")
+    employee = relationship("StoreMembers", back_populates="schedule_requests")
+
 # ==========================================
 # 6. 매장 커뮤니티 (게시판)
 # ==========================================
@@ -257,3 +284,44 @@ class StoreCommunityComment(Base):
     # 대댓글 셀프 참조 관계
     parent = relationship("StoreCommunityComment", remote_side=[id], back_populates="replies")
     replies = relationship("StoreCommunityComment", back_populates="parent", cascade="all, delete-orphan")
+
+class CashShortageStatus(enum.Enum):
+    plus = "plus"
+    minus = "minus"
+
+class DailyClosingReport(Base):
+    __tablename__ = "daily_closing_reports"
+
+    id = Column(Integer, primary_key=True, index=True)
+    store_id = Column(BigInteger, ForeignKey("stores.id"), nullable=False)
+    employee_id = Column(BigInteger, ForeignKey("store_members.id"), nullable=False)
+    
+    # 보고 날짜
+    report_date = Column(Date, nullable=False)
+    
+    # 1단계: 매출 정보
+    card_sales = Column(BigInteger, default=0)
+    cash_sales = Column(BigInteger, default=0)
+    transfer_sales = Column(BigInteger, default=0)
+    gift_sales = Column(BigInteger, default=0)
+    
+    # 2단계: 할인/환불/시제
+    discount_amount = Column(BigInteger, default=0)
+    refund_amount = Column(BigInteger, default=0)
+    cash_on_hand = Column(BigInteger, default=0)
+    
+    # 현금 과부족
+    cash_shortage_type = Column(Enum(CashShortageStatus), nullable=True)
+    cash_shortage_amount = Column(BigInteger, default=0)
+    
+    # 3단계: 영수증 이미지
+    receipt_image_url = Column(String(500), nullable=True)
+    
+    # 4단계: 추가 전달 내용
+    manager_note = Column(Text, nullable=True)
+    
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    # --- 외래키 관계 설정 (Relationship) ---
+    store = relationship("Store", back_populates="closing_reports")
+    employee = relationship("StoreMembers", back_populates="closing_reports")

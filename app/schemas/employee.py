@@ -1,5 +1,6 @@
 from pydantic import BaseModel, field_serializer
 from datetime import time, datetime
+from typing import List, Optional
 
 
 # === 매장코드 검증 스키마 === #
@@ -73,3 +74,20 @@ class MonthlyScheduleRequest(BaseModel):
     store_id: int
     employee_id: int
     month: int
+
+
+class ClosingReportRequest(BaseModel):
+    store_id: int
+    employee_id: int
+    card_sales: int
+    cash_sales: int
+    transfer_sales: int
+    gift_sales: int
+    discount_amount: int
+    refund_amount: int
+    cash_on_hand: int
+    cash_shortage_type: Optional[str]
+    cash_shortage_amount: int
+    receipt_image_url: Optional[str]
+    manager_note: str
+    report_date: str
