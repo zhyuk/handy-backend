@@ -59,7 +59,10 @@ def password_encode(password: str):
     return BCRYPT.hash(password)
 
 def password_decode(password: str, hashed_password: str):
-    """ 비밀번호 디코딩 -> 암호 해독 작업 """
+    """ 
+    비밀번호 디코딩 -> 암호 해독 작업 
+    * password_decode(입력받은 비밀번호, DB에서 조회하는 비밀번호)
+    """
     return BCRYPT.verify(password, hashed_password)
 # ===================================================== 비밀번호 관련 ===================================================== #
 

@@ -13,7 +13,7 @@ from calendar import monthrange
 
 from models import Member, Store, StoreMap, MemberRequest, StoreMembers, StoreMembersTodo, StoreMembersWork, StoreCommunity, StoreMembersWorkLog, StoreMembersDetail, ScheduleChangeRequest, DailyClosingReport
 from database import get_db
-from schemas.employee import VerifyCode, MemberRequestSchemas, TodoListRequest, TodoListResponse, TodoListModifyRequest, WorkRequest, WrokResponse, NoticeResponse, WeeklyWorkRequest, WeeklyWorkResponse, MonthlyScheduleRequest, ClosingReportRequest
+from schemas.employee import VerifyCode, MemberRequestSchemas, TodoListRequest, TodoListResponse, TodoListModifyRequest, WorkRequest, WrokResponse, NoticeResponse, WeeklyWorkRequest, WeeklyWorkResponse, MonthlyScheduleRequest, ClosingReportRequest, MyInfoModifyRequest, WorkTimeRequest
 from utils.uitls import format_phone_number, get_coords_from_address
 
 
@@ -108,11 +108,13 @@ async def get_today_work(req: WorkRequest, db: Session = Depends(get_db)):
     ----------------------------------------
     """
     # print(req)
-    today_weekday = datetime.now().weekday()
-    print("today_weekday:" , today_weekday)
+    # today_weekday = datetime.now().weekday() + 1
+    # print("today_weekday:" , today_weekday)
+    today = datetime.now().date()
+    print(datetime.now().date())
 
     try:
-        today_work = db.query(StoreMembersWork).filter(StoreMembersWork.employee_id == req.employee_id, StoreMembersWork.day_of_week == today_weekday).first()
+        today_work = db.query(StoreMembersWork).filter(StoreMembersWork.employee_id == req.employee_id, StoreMembersWork.work_date == today).first()
 
         if not today_work:
             raise HTTPException(status_code=404, detail="오늘 예정된 근무 일정이 없습니다.")
@@ -120,9 +122,32 @@ async def get_today_work(req: WorkRequest, db: Session = Depends(get_db)):
         return today_work
     
     except Exception as e:
-        db.rollback()
+        # db.rollback()
         raise HTTPException(status_code=500, detail="근무 일정 조회 중 서버 오류가 발생했습니다.")
 # ======= 본인 근무일정 조회 ======= #
+
+# ======= 본인 근무 상태 조회 ======= #
+@router.post("/work/status")
+async def get_work_status(req: WorkRequest, db: Session = Depends(get_db)):
+    today = datetime.now().date()
+    
+    try:
+        log = (
+            db.query(StoreMembersWorkLog)
+            .filter(
+                StoreMembersWorkLog.employee_id == req.employee_id,
+                StoreMembersWorkLog.work_date == today)
+            .order_by(StoreMembersWorkLog.work_date.desc())
+            .first()
+        )
+
+        if not log:
+            return {"status": None}
+
+        return {"status": log.status}  # "working" | "off_work" | "on_break"
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail="근무 상태 조회 중 서버 오류가 발생했습니다.")
 
 # ======= 체크리스트 조회 ======= #
 @router.post("/todo", response_model=list[TodoListResponse])
@@ -733,3 +758,315 @@ def check_closing_status(store_id: int, db: Session = Depends(get_db)):
     
     return {"is_completed": True if exists else False}
 # ======= 마감 보고 ======= #
+
+
+@router.get("/mypage")
+def get_my_info(employee_id: int, store_id: int, db: Session = Depends(get_db)):
+    """
+    ----------------------------------------
+    직원 마이페이지 정보 조회 API
+
+    * employee_id: store_members.id
+    * members + store_members + store_members_detail 조인하여 반환
+    ----------------------------------------
+    """
+    print("employee_id : " , employee_id)
+    print("store_id : " , store_id)
+
+    result = (
+        db.query(StoreMembers, Member, StoreMembersDetail)
+        .join(Member, StoreMembers.member_id == Member.id)
+        .outerjoin(StoreMembersDetail, StoreMembersDetail.store_member_id == StoreMembers.id)
+        .filter(StoreMembers.id == employee_id)
+        .first()
+    )
+
+    if not result:
+        raise HTTPException(status_code=404, detail="직원 정보를 찾을 수 없습니다.")
+
+    store_member, member, detail = result
+
+    store = db.query(Store).filter(Store.id == store_id).first()
+    store_name = store.name if store else None
+
+    # 나이 계산
+    age = None
+    if member.birth:
+        today = date.today()
+        age = today.year - member.birth.year - (
+            (today.month, today.day) < (member.birth.month, member.birth.day)
+        )
+
+    # 입사 경과일 계산
+    days_since_joined = (date.today() - store_member.joined_at.date()).days + 1
+
+    return {
+        "name": member.name,
+        "birth": member.birth.strftime("%Y.%m.%d") if member.birth else None,
+        "age": age,
+        "gender": "남자" if member.gender == "male" else "여자" if member.gender == "female" else None,
+        "phone": member.phone,
+        "image_url": None,
+        "bank": store_member.bank,
+        "account_number": store_member.accountNumber,
+        "joined_at": store_member.joined_at.strftime("%Y.%m.%d"),
+        "days_since_joined": days_since_joined,
+        "store_name": store_name,
+        "role": store_member.role,
+        "employee_type": detail.employee_type if detail else None,
+        "salary_cycle": detail.salary_cycle if detail else None,
+        "salary_day": detail.salary_day if detail else None,
+        "hourly_rate": detail.hourly_rate if detail else None,
+        "is_probation": detail.is_probation if detail else False,
+        "income_tax": detail.income_tax if detail else None,
+        "local_income_tax": detail.local_income_tax if detail else None,
+        "national_pension_tax": detail.national_pension_tax if detail else None,
+        "health_insurance_tax": detail.health_insurance_tax if detail else None,
+        "long_term_care_tax": detail.long_term_care_tax if detail else None,
+        "employment_insurance_tax": detail.employment_insurance_tax if detail else None,
+        "industrial_accident_tax": detail.industrial_accident_tax if detail else None,
+        "resume": detail.resume if detail else None,
+        "employment_contract": detail.employment_contract if detail else None,
+        "health_certificate": detail.health_certificate if detail else None,
+    }
+
+@router.post("/mypage/edit")
+def get_my_info(body: MyInfoModifyRequest, db: Session = Depends(get_db)):
+    """
+    ----------------------------------------
+    [직원] 마이페이지 정보 수정 API
+
+    * 이름 / 은행 / 계좌번호 / 이력서 / 근로계약서 / 보건증 수정 가능
+
+    ----------------------------------------
+    """
+    print(body)
+
+    # TODO: 추후 JWT 토큰을 활용하여 동적으로 유저 가져오도록 수정
+    user = db.query(StoreMembers).filter(StoreMembers.member_id == 1).first()
+
+    if not user:
+        raise HTTPException(status_code=404, detail="사용자 정보를 찾을 수 없습니다.")
+    
+    user.bank = body.bank
+    user.accountNumber = body.accountNumber
+
+    try:
+        db.commit()
+
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail="서버 오류로 인해 정보 수정에 실패했습니다.")
+
+
+@router.get("/mypage")
+def get_my_info(employee_id: int, store_id: int, db: Session = Depends(get_db)):
+    """
+    ----------------------------------------
+    직원 마이페이지 정보 조회 API
+
+    * employee_id: store_members.id
+    * members + store_members + store_members_detail 조인하여 반환
+    ----------------------------------------
+    """
+    print("employee_id : " , employee_id)
+    print("store_id : " , store_id)
+
+    result = (
+        db.query(StoreMembers, Member, StoreMembersDetail)
+        .join(Member, StoreMembers.member_id == Member.id)
+        .outerjoin(StoreMembersDetail, StoreMembersDetail.store_member_id == StoreMembers.id)
+        .filter(StoreMembers.id == employee_id)
+        .first()
+    )
+
+    if not result:
+        raise HTTPException(status_code=404, detail="직원 정보를 찾을 수 없습니다.")
+
+    store_member, member, detail = result
+
+    store = db.query(Store).filter(Store.id == store_id).first()
+    store_name = store.name if store else None
+
+    # 나이 계산
+    age = None
+    if member.birth:
+        today = date.today()
+        age = today.year - member.birth.year - (
+            (today.month, today.day) < (member.birth.month, member.birth.day)
+        )
+
+    # 입사 경과일 계산
+    days_since_joined = (date.today() - store_member.joined_at.date()).days + 1
+
+    return {
+        "name": member.name,
+        "birth": member.birth.strftime("%Y.%m.%d") if member.birth else None,
+        "age": age,
+        "gender": "남자" if member.gender == "male" else "여자" if member.gender == "female" else None,
+        "phone": member.phone,
+        "image_url": None,
+        "bank": store_member.bank,
+        "account_number": store_member.accountNumber,
+        "joined_at": store_member.joined_at.strftime("%Y.%m.%d"),
+        "days_since_joined": days_since_joined,
+        "store_name": store_name,
+        "role": store_member.role,
+        "employee_type": detail.employee_type if detail else None,
+        "salary_cycle": detail.salary_cycle if detail else None,
+        "salary_day": detail.salary_day if detail else None,
+        "hourly_rate": detail.hourly_rate if detail else None,
+        "is_probation": detail.is_probation if detail else False,
+        "income_tax": detail.income_tax if detail else None,
+        "local_income_tax": detail.local_income_tax if detail else None,
+        "national_pension_tax": detail.national_pension_tax if detail else None,
+        "health_insurance_tax": detail.health_insurance_tax if detail else None,
+        "long_term_care_tax": detail.long_term_care_tax if detail else None,
+        "employment_insurance_tax": detail.employment_insurance_tax if detail else None,
+        "industrial_accident_tax": detail.industrial_accident_tax if detail else None,
+        "resume": detail.resume if detail else None,
+        "employment_contract": detail.employment_contract if detail else None,
+        "health_certificate": detail.health_certificate if detail else None,
+    }
+
+
+# ======= 근태 관리 ======= #
+@router.post("/work/clock-in")
+def add_clock_in(body: WorkTimeRequest, db: Session = Depends(get_db)):
+    """
+    ----------------------------------------
+    [직원] 출근 처리 API
+    ----------------------------------------
+    """
+    print(body)
+
+    # TODO: JWT 토큰에서 유저 ID 조회하는 방향으로 수정
+    user = db.query(Member).filter(Member.id == 1).first()
+
+    if not user:
+        raise HTTPException(status_code=404, detail="사용자 정보를 찾을 수 없습니다.")
+    
+    employee = db.query(StoreMembers).filter(StoreMembers.store_id == body.store_id, StoreMembers.member_id == user.id).first()
+
+    if not employee:
+        raise HTTPException(status_code=404, detail="일치하는 직원 정보를 찾을 수 없습니다.")
+
+    now = datetime.now()
+    # print(now)
+
+    today = now.date()
+    # print(today)
+
+    workLog = StoreMembersWorkLog(
+        store_id = body.store_id,
+        employee_id = employee.id,
+        work_date = today,
+        start_time = now,
+        status = "working"
+    )
+
+    db.add(workLog)
+    db.commit()
+
+
+
+@router.post("/work/clock-out")
+def add_clock_out(body: WorkTimeRequest, db: Session = Depends(get_db)):
+    """
+    ----------------------------------------
+    [직원] 퇴근 처리 API
+    ----------------------------------------
+    """
+    print(body)
+
+    # TODO: JWT 토큰에서 유저 ID 조회하는 방향으로 수정
+    user = db.query(Member).filter(Member.id == 1).first()
+
+    if not user:
+        raise HTTPException(status_code=404, detail="사용자 정보를 찾을 수 없습니다.")
+    
+    employee = db.query(StoreMembers).filter(StoreMembers.store_id == body.store_id, StoreMembers.member_id == user.id).first()
+
+    if not employee:
+        raise HTTPException(status_code=404, detail="일치하는 직원 정보를 찾을 수 없습니다.")
+    
+
+    today = datetime.now().date()
+
+    workLog = db.query(StoreMembersWorkLog).filter(StoreMembersWorkLog.work_date == today, StoreMembersWorkLog.end_time.is_(None)).first()
+
+    if not workLog:
+        raise HTTPException(status_code=404, detail="일치하는 출근 정보를 찾을 수 없습니다.")
+    
+    workLog.end_time = datetime.now()
+    workLog.status = "off_work"
+    if workLog.break_end_time.is_(None):
+        workLog.break_end_time = datetime.now()
+
+    db.commit()
+
+@router.post("/work/break-start")
+def add_break_start(body: WorkTimeRequest, db: Session = Depends(get_db)):
+    """
+    ----------------------------------------
+    [직원] 휴게 시작 처리 API
+    ----------------------------------------
+    """
+    print(body)
+
+    # TODO: JWT 토큰에서 유저 ID 조회하는 방향으로 수정
+    user = db.query(Member).filter(Member.id == 1).first()
+
+    if not user:
+        raise HTTPException(status_code=404, detail="사용자 정보를 찾을 수 없습니다.")
+    
+    employee = db.query(StoreMembers).filter(StoreMembers.store_id == body.store_id, StoreMembers.member_id == user.id).first()
+
+    if not employee:
+        raise HTTPException(status_code=404, detail="일치하는 직원 정보를 찾을 수 없습니다.")
+    
+
+    today = datetime.now().date()
+
+    workLog = db.query(StoreMembersWorkLog).filter(StoreMembersWorkLog.work_date == today, StoreMembersWorkLog.status == "working", StoreMembersWorkLog.end_time.is_(None)).first()
+
+    if not workLog:
+        raise HTTPException(status_code=404, detail="일치하는 출근 정보를 찾을 수 없습니다.")
+    
+    workLog.break_start_time = datetime.now()
+    workLog.status = "on_break"
+
+    db.commit()
+
+@router.post("/work/break-end")
+def break_end(body: WorkTimeRequest, db: Session = Depends(get_db)):
+    """
+    ----------------------------------------
+    [직원] 휴게 종료 처리 API
+    ----------------------------------------
+    """
+    print(body)
+
+    # TODO: JWT 토큰에서 유저 ID 조회하는 방향으로 수정
+    user = db.query(Member).filter(Member.id == 1).first()
+
+    if not user:
+        raise HTTPException(status_code=404, detail="사용자 정보를 찾을 수 없습니다.")
+    
+    employee = db.query(StoreMembers).filter(StoreMembers.store_id == body.store_id, StoreMembers.member_id == user.id).first()
+
+    if not employee:
+        raise HTTPException(status_code=404, detail="일치하는 직원 정보를 찾을 수 없습니다.")
+    
+
+    today = datetime.now().date()
+
+    workLog = db.query(StoreMembersWorkLog).filter(StoreMembersWorkLog.work_date == today, StoreMembersWorkLog.status == "on_break", StoreMembersWorkLog.end_time.is_(None), StoreMembersWorkLog.break_end_time.is_(None)).first()
+
+    if not workLog:
+        raise HTTPException(status_code=404, detail="일치하는 출근 정보를 찾을 수 없습니다.")
+    
+    workLog.break_end_time = datetime.now()
+    workLog.status = "working"
+
+    db.commit()

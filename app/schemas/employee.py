@@ -91,3 +91,16 @@ class ClosingReportRequest(BaseModel):
     receipt_image_url: Optional[str]
     manager_note: str
     report_date: str
+
+
+class MyInfoModifyRequest(BaseModel):
+    name: str
+    bank: str
+    accountNumber: str
+    resume: Optional[str] = None
+    employment_contract: Optional[str] = None
+    health_certificate: Optional[str] = None
+
+# ===== 근태 관리 전용 스키마 ===== #
+class WorkTimeRequest(BaseModel):
+    store_id: int    

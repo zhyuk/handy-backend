@@ -9,8 +9,9 @@ from database import get_db
 from typing import Optional, List
 
 from models import Store, StoreMap, StoreCommunity, StoreCommunityComment, StoreMembers, Member
+from utils.auth_utils import password_encode, password_decode
 from utils.uitls import create_store_code
-from schemas.public import BoardCreateResponse, BoardRequest, BoardResponse, BoardDetailResponse, CommentCreateRequest
+from schemas.public import BoardCreateResponse, BoardRequest, BoardResponse, BoardDetailResponse, CommentCreateRequest, PasswordRequest, StoreRequest
 
 
 router = APIRouter(prefix="/api/common", tags=["공통 기능"])
@@ -28,6 +29,27 @@ async def add_stores(db: Session = Depends(get_db)):
     ----------------------------------------
     """
     store_code = create_store_code(db)
+
+@router.post("/store/map")
+async def get_store_map(req: StoreRequest, db: Session = Depends(get_db)):
+    """
+    ----------------------------------------
+    매장 위치 정보 리턴 API
+    ----------------------------------------
+    """
+    store_map = db.query(StoreMap).filter(StoreMap.store_id == req.store_id).first()
+    if not store_map:
+        raise HTTPException(status_code=404, detail="매장 위치 정보가 없습니다.")
+    
+    store = db.query(Store).filter(Store.id == req.store_id).first()
+    if not store:
+        raise HTTPException(status_code=404, detail="매장 정보가 없습니다.")
+
+    return {
+        "lat": store_map.lat,
+        "lng": store_map.lng,
+        "radius": store.radius
+    }
 
     
 # ==================== 게시글 관련 ==================== #
@@ -310,3 +332,33 @@ async def delete_comment(comment_id: int,  db: Session = Depends(get_db)):
     db.commit()
     return {"message": "댓글이 삭제되었습니다."}
 # ==================== 댓글 관련 종료 ==================== #
+
+# ==================== 비밀번호 변경 ==================== #
+@router.post("/password/change")
+async def change_password(req: PasswordRequest, db: Session = Depends(get_db)):
+    """
+    ----------------------------------------
+    사용자 비밀번호 변경 API
+    ----------------------------------------
+    """
+    print(req)
+
+    # TODO: 추후 JWT 토큰을 쿠키에서 꺼내오는 방식으로 수정
+    user = db.query(Member).filter(Member.id == req.user_id).first()
+
+    if not user:
+        raise HTTPException(status_code=404, detail="사용자 정보를 찾을 수 없습니다.")
+    
+
+    if not password_decode(req.old_password, user.password):
+        raise HTTPException(status_code=401, detail="기존 비밀번호가 일치하지 않습니다.")
+    
+    user.password = password_encode(req.new_password)
+
+    try:
+        db.commit()
+
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail="서버 오류로 인해 비밀번호를 변경하지 못했습니다.")
+# ==================== 비밀번호 변경 ==================== #

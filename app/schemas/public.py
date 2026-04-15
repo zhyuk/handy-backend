@@ -56,3 +56,13 @@ class CommentCreateRequest(BaseModel):
     employee_id: int
     content: str
     parent_id: int | None = None 
+
+
+# === 비밀번호 변경 스키마 === #
+class PasswordRequest(BaseModel):
+    old_password: str
+    new_password: str
+    user_id: int
+
+class StoreRequest(BaseModel):
+    store_id: int

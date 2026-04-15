@@ -221,6 +221,8 @@ class StoreMembersWorkLog(Base):
     work_date = Column(Date, nullable=False)
     start_time = Column(Time, nullable=False)
     end_time = Column(Time, nullable=True)
+    break_start_time = Column(Time, nullable=True)
+    break_end_time = Column(Time, nullable=True)
     status = Column(String(20), server_default="active")
 
     employee = relationship("StoreMembers", back_populates="work_logs")
