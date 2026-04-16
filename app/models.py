@@ -72,6 +72,7 @@ class Store(Base):
     community_posts = relationship("StoreCommunity", back_populates="store", cascade="all, delete-orphan")
     all_todos = relationship("StoreMembersTodo", back_populates="store", cascade="all, delete-orphan")
     closing_reports = relationship("DailyClosingReport", back_populates="store", cascade="all, delete-orphan")
+    change_requests = relationship("WorkLogChangeRequest", back_populates="store", cascade="all, delete-orphan")
 
 class StoreMap(Base):
     __tablename__ = "store_maps"
@@ -155,6 +156,7 @@ class StoreMembers(Base):
     comments = relationship("StoreCommunityComment", back_populates="author")
 
     closing_reports = relationship("DailyClosingReport", back_populates="employee", cascade="all, delete-orphan")
+    work_log_requests = relationship("WorkLogChangeRequest", back_populates="employee", cascade="all, delete-orphan")
 
 class StoreMembersDetail(Base):
     __tablename__ = "store_members_detail"
@@ -327,3 +329,30 @@ class DailyClosingReport(Base):
     # --- 외래키 관계 설정 (Relationship) ---
     store = relationship("Store", back_populates="closing_reports")
     employee = relationship("StoreMembers", back_populates="closing_reports")
+
+# 근무 기록 수정 요청 모델
+class WorkLogChangeRequest(Base):
+    __tablename__ = "workLog_change_request"
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True, comment="요청 고유번호")
+    store_id = Column(BigInteger, ForeignKey("stores.id"), nullable=False, comment="매장 고유번호 (FK)")
+    employee_id = Column(BigInteger, ForeignKey("store_members.id"), nullable=False, comment="직원 고유번호 (FK) (작성자)")
+    
+    type = Column(String(100), nullable=False, comment="타입")
+    date = Column(Date, nullable=False, comment="변경 일자")
+    
+    origin_start = Column(Time, nullable=True, comment="기존 출근 시간")
+    origin_end = Column(Time, nullable=True, comment="기존 퇴근 시간")
+    
+    desired_start = Column(Time, nullable=True, comment="변경 출근 시간")
+    desired_end = Column(Time, nullable=True, comment="변경 퇴근 시간")
+    desired_break = Column(Integer, nullable=True, comment="변경 휴게 시간")
+    
+    reason = Column(Text, nullable=False, comment="사유")
+    status = Column(String(10), nullable=False, server_default="pending", comment="상태")
+    
+    created_at = Column(DateTime, nullable=False, server_default=func.now(), comment="생성일")
+
+    # 관계 설정 (필요 시 주석 해제하여 사용)
+    store = relationship("Store", back_populates="change_requests")
+    employee = relationship("StoreMembers", back_populates="work_log_requests")

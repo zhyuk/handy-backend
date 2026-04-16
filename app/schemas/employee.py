@@ -104,3 +104,28 @@ class MyInfoModifyRequest(BaseModel):
 # ===== 근태 관리 전용 스키마 ===== #
 class WorkTimeRequest(BaseModel):
     store_id: int    
+
+# ===== 출근 기록 조회 스키마 ===== #
+class WorkMonthRequest(BaseModel):
+    employee_id: int
+    store_id: int
+    year: int
+    month: int
+
+# ===== 출근 기록 수정 요청 스키마 ===== #
+class WorkChangeRequest(BaseModel):
+    store_id: int
+    employee_id: int
+    type: str
+    date: str
+    origin_start: Optional[str] = None
+    origin_end: Optional[str] = None
+    desired_start: Optional[str] = None
+    desired_end: Optional[str] = None
+    desired_break: Optional[str] = None
+    reason: str
+
+# ===== 출근 기록 수정내역 조회 스키마 ===== #
+class WorkChangeRequestLogSchemas(BaseModel):
+    store_id: int
+    employee_id: int

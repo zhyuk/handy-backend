@@ -11,9 +11,9 @@ import uuid
 from datetime import datetime, timedelta, date
 from calendar import monthrange
 
-from models import Member, Store, StoreMap, MemberRequest, StoreMembers, StoreMembersTodo, StoreMembersWork, StoreCommunity, StoreMembersWorkLog, StoreMembersDetail, ScheduleChangeRequest, DailyClosingReport
+from models import Member, Store, StoreMap, MemberRequest, StoreMembers, StoreMembersTodo, StoreMembersWork, StoreCommunity, StoreMembersWorkLog, StoreMembersDetail, ScheduleChangeRequest, DailyClosingReport, WorkLogChangeRequest
 from database import get_db
-from schemas.employee import VerifyCode, MemberRequestSchemas, TodoListRequest, TodoListResponse, TodoListModifyRequest, WorkRequest, WrokResponse, NoticeResponse, WeeklyWorkRequest, WeeklyWorkResponse, MonthlyScheduleRequest, ClosingReportRequest, MyInfoModifyRequest, WorkTimeRequest
+from schemas.employee import VerifyCode, MemberRequestSchemas, TodoListRequest, TodoListResponse, TodoListModifyRequest, WorkRequest, WrokResponse, NoticeResponse, WeeklyWorkRequest, WeeklyWorkResponse, MonthlyScheduleRequest, ClosingReportRequest, MyInfoModifyRequest, WorkTimeRequest, WorkMonthRequest, WorkChangeRequest, WorkChangeRequestLogSchemas
 from utils.uitls import format_phone_number, get_coords_from_address
 
 
@@ -848,6 +848,7 @@ def get_my_info(body: MyInfoModifyRequest, db: Session = Depends(get_db)):
     if not user:
         raise HTTPException(status_code=404, detail="사용자 정보를 찾을 수 없습니다.")
     
+    # TODO: 이름 수정하는 부분은 추후 수정해야함. -> 어떻게 처리할지
     user.bank = body.bank
     user.accountNumber = body.accountNumber
 
@@ -1070,3 +1071,132 @@ def break_end(body: WorkTimeRequest, db: Session = Depends(get_db)):
     workLog.status = "working"
 
     db.commit()
+
+@router.post("/work/logs")
+async def get_work_logs(req: WorkMonthRequest, db: Session = Depends(get_db)):
+    """
+    ----------------------------------------
+    [직원] 출근 기록 조회 API
+    ----------------------------------------
+    """
+    logs = (
+        db.query(StoreMembersWorkLog)
+        .filter(
+            StoreMembersWorkLog.employee_id == req.employee_id,
+            StoreMembersWorkLog.store_id == req.store_id,
+            extract('year', StoreMembersWorkLog.work_date) == req.year,
+            extract('month', StoreMembersWorkLog.work_date) == req.month,
+        )
+        .all()
+    )
+
+    schedules = (
+        db.query(StoreMembersWork)
+        .filter(
+            StoreMembersWork.employee_id == req.employee_id,
+            StoreMembersWork.store_id == req.store_id,
+            extract('year', StoreMembersWork.work_date) == req.year,
+            extract('month', StoreMembersWork.work_date) == req.month,
+        )
+        .all()
+    )
+
+    log_map = {str(l.work_date): l for l in logs}
+    today = datetime.now().date()
+
+    result = []
+    for sched in schedules:
+        date_key = str(sched.work_date)
+        log = log_map.get(date_key)
+
+        # 미래 날짜는 skip
+        if sched.work_date > today:
+            continue
+
+        if log:
+            result.append({
+                "work_date": sched.work_date,
+                "start_time": str(log.start_time) if log.start_time else None,
+                "end_time": str(log.end_time) if log.end_time else None,
+                "break_start_time": str(log.break_start_time) if log.break_start_time else None,
+                "break_end_time": str(log.break_end_time) if log.break_end_time else None,
+                "status": log.status,
+                "is_holiday": sched.is_holiday or False,
+                "sched_start": str(sched.work_start) if sched.work_start else None,
+                "sched_end": str(sched.work_end) if sched.work_end else None,
+            })
+        else:
+            # 스케줄 있는데 로그 없음 = 결근
+            result.append({
+                "work_date": sched.work_date,
+                "start_time": None,
+                "end_time": None,
+                "break_start_time": None,
+                "break_end_time": None,
+                "status": "absent" if not (sched.is_holiday or False) else None,
+                "is_holiday": sched.is_holiday or False,
+                "sched_start": str(sched.work_start) if sched.work_start else None,
+                "sched_end": str(sched.work_end) if sched.work_end else None,
+            })
+
+    return result
+
+@router.post("/worklog/request")
+async def work_log_change_request(req: WorkChangeRequest, db: Session = Depends(get_db)):
+    """
+    ----------------------------------------
+    [직원] 출근 기록 수정 요청 API
+    ----------------------------------------
+    """
+
+    print(req)
+
+    is_break_change = req.type == "휴게 시간 변경"
+    is_missing_work = req.type == "근무 누락"
+
+    if is_break_change:
+        old_break_change = db.query(WorkLogChangeRequest).filter(WorkLogChangeRequest.date == req.date, WorkLogChangeRequest.type == "휴게 시간 변경", WorkLogChangeRequest.status == "pending").first()
+
+        if old_break_change:
+            raise HTTPException(status_code=409, detail="이미 해당 날짜에 휴게 시간 변경 요청이 존재합니다.")
+
+
+    if is_missing_work:
+        old_missing_work = db.query(WorkLogChangeRequest).filter(WorkLogChangeRequest.date == req.date, WorkLogChangeRequest.type == "근무 누락", WorkLogChangeRequest.status == "pending").first()
+
+        if old_missing_work:
+            raise HTTPException(status_code=409, detail="이미 해당 날짜에 근무 누락 수정 요청이 존재합니다.")
+        
+    
+
+
+
+    new_request = WorkLogChangeRequest(
+        store_id=req.store_id,
+        employee_id=req.employee_id,
+        type=req.type,
+        date=req.date,
+        origin_start=None if is_break_change else req.origin_start,
+        origin_end=None if is_break_change else req.origin_end,
+        desired_start=None if is_break_change else req.desired_start,
+        desired_end=None if is_break_change else req.desired_end,
+        desired_break=req.desired_break,
+        reason=req.reason,
+    )
+
+    db.add(new_request)
+    db.commit()
+
+@router.get("/worklog/request")
+async def work_log_change_request(employee_id: int, store_id: int, db: Session = Depends(get_db)):
+    """
+    ----------------------------------------
+    [직원] 출근 기록 수정내역 조회 API
+    ----------------------------------------
+    """
+
+    requests = db.query(WorkLogChangeRequest).filter(
+        WorkLogChangeRequest.employee_id == employee_id,
+        WorkLogChangeRequest.store_id == store_id,
+    ).order_by(WorkLogChangeRequest.created_at.desc()).all()
+    return requests
