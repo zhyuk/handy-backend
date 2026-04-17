@@ -1,4 +1,4 @@
-import os
+import os, shutil
 import uuid
 import secrets
 import json
@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 from database import get_db
 from typing import Optional, List
 
-from models import Store, StoreMap, StoreCommunity, StoreCommunityComment, StoreMembers, Member
+from models import Store, StoreMap, StoreCommunity, StoreCommunityComment, StoreMembers, Member, Notice, Faq, Feedback
 from utils.auth_utils import password_encode, password_decode
 from utils.uitls import create_store_code
 from schemas.public import BoardCreateResponse, BoardRequest, BoardResponse, BoardDetailResponse, CommentCreateRequest, PasswordRequest, StoreRequest
@@ -17,7 +17,12 @@ from schemas.public import BoardCreateResponse, BoardRequest, BoardResponse, Boa
 router = APIRouter(prefix="/api/common", tags=["공통 기능"])
 
 BOARD_UPLOAD_DIR = "uploads/board/"
-os.makedirs(BOARD_UPLOAD_DIR, exist_ok=True)
+if not os.path.exists(BOARD_UPLOAD_DIR):
+    os.makedirs(BOARD_UPLOAD_DIR, exist_ok=True)
+
+FEEDBACK_UPLOAD_DIR = "uploads/feedback/"
+if not os.path.exists(FEEDBACK_UPLOAD_DIR):
+    os.makedirs(FEEDBACK_UPLOAD_DIR, exist_ok=True)
 
 @router.get("")
 async def add_stores(db: Session = Depends(get_db)):
@@ -362,3 +367,89 @@ async def change_password(req: PasswordRequest, db: Session = Depends(get_db)):
         db.rollback()
         raise HTTPException(status_code=500, detail="서버 오류로 인해 비밀번호를 변경하지 못했습니다.")
 # ==================== 비밀번호 변경 ==================== #
+
+@router.get("/notice")
+async def get_notice(db: Session = Depends(get_db)):
+    """
+    ----------------------------------------
+    핸디 서비스 내 공지사항 조회 API
+    ----------------------------------------
+    """
+
+    notice = db.query(Notice).filter(Notice.is_deleted == False).order_by(desc(Notice.created_at)).all()
+    ()
+
+    return notice
+
+@router.get("/notice/{id}")
+async def get_notice_detail(id: int, db: Session = Depends(get_db)):
+    """
+    ----------------------------------------
+    핸디 서비스 내 공지사항 세부목록 조회 API
+    ----------------------------------------
+    """
+
+    noticeDetail = db.query(Notice).filter(Notice.is_deleted == False, Notice.id == id).first()
+
+    return noticeDetail
+
+
+@router.get("/faq")
+async def get_faq(db: Session = Depends(get_db)):
+    """
+    ----------------------------------------
+    자주 묻는 질문 조회 API
+    ----------------------------------------
+    """
+
+    results = db.query(Faq).filter(Faq.is_deleted == False).order_by(Faq.id).all()
+
+    return results
+
+@router.post("/feedback")
+async def post_feedback(
+    member_id: int = Form(...),
+    title: str = Form(...),
+    content: str = Form(...),
+    images: Optional[List[UploadFile]] = File(None),
+    db: Session = Depends(get_db)
+    ):
+    """
+    ----------------------------------------
+    고객 건의함 작성 API
+    ----------------------------------------
+    """
+
+    image_urls = []
+    if images:
+        for image in images:
+            ext = os.path.splitext(image.filename)[1]
+            new_filename = f"{uuid.uuid4()}{ext}"
+            file_path = os.path.join(FEEDBACK_UPLOAD_DIR, new_filename)
+            content_data = await image.read()
+            with open(file_path, "wb") as f:
+                f.write(content_data)
+            image_urls.append(f"/uploads/feedback/{new_filename}")
+
+    feedback = Feedback(
+        member_id=member_id,
+        title=title,
+        content=content,
+        image=image_urls if image_urls else None,
+    )
+    db.add(feedback)
+    db.commit()
+    db.refresh(feedback)
+    return feedback
+
+@router.get("/feedback/{id}")
+async def get_personal_feedback(id: int, db: Session = Depends(get_db)):
+    """
+    ----------------------------------------
+    고객 건의내역 조회 API
+    ----------------------------------------
+    """
+
+    # TODO: 추후 ID는 JWT 토큰에서 꺼내오도록 수정
+    feedbacks = db.query(Feedback).filter(Feedback.member_id == id).order_by(Feedback.created_at.desc()).all()
+    return feedbacks

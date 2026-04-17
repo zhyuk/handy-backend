@@ -24,6 +24,7 @@ class Member(Base):
     tokens = relationship("JwtTokens", back_populates="member", cascade="all, delete-orphan")
     members_for_storeMembers = relationship("StoreMembers", back_populates="member", cascade="all, delete-orphan")
     member_requests = relationship("MemberRequest", back_populates="member", cascade="all, delete-orphan")
+    feedbacks = relationship("Feedback", back_populates="member", cascade="all, delete-orphan")
 
 class SocialAccount(Base):
     __tablename__ = "social_accounts"
@@ -356,3 +357,36 @@ class WorkLogChangeRequest(Base):
     # 관계 설정 (필요 시 주석 해제하여 사용)
     store = relationship("Store", back_populates="change_requests")
     employee = relationship("StoreMembers", back_populates="work_log_requests")
+
+class Notice(Base):
+    __tablename__ = "notice"
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True, comment="공지사항 고유번호")
+    title = Column(String(200), comment="제목")
+    content = Column(Text, nullable=False, comment="내용")
+    image = Column(JSON, comment="이미지 URL")
+    created_at = Column(DateTime, nullable=False, server_default=func.now(), comment="생성일")
+    is_deleted = Column(Boolean, server_default="false", comment="노출 여부(삭제 여부)")
+
+class Faq(Base):
+    __tablename__ = "faq"
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True, comment="요청 고유번호")
+    type = Column(String(20), nullable=False, comment="질문 유형")
+    question = Column(String(500), nullable=False, comment="질문")
+    answer = Column(Text, nullable=False, comment="답변")
+    is_deleted = Column(Boolean, server_default="false", comment="노출 여부(삭제 여부)")
+class Feedback(Base):
+    __tablename__ = "feedback"
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True, comment="건의 고유번호")
+    member_id = Column(BigInteger, ForeignKey("members.id"))
+    title = Column(String(200), comment="제목")
+    content = Column(Text, comment="내용")
+    image = Column(JSON, comment="이미지 URL")
+    status = Column(String(30), server_default="pending", comment="상태")
+    answer = Column(Text, nullable=True, comment="답변")
+    created_at = Column(DateTime, server_default=func.now(), comment="생성 일시(건의 일시)")
+    answered_at = Column(DateTime, onupdate=func.now(), comment="답변 일시")
+
+    member = relationship("Member", back_populates="feedbacks")

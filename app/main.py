@@ -7,7 +7,7 @@ import os
 from fastapi.staticfiles import StaticFiles
 
 
-from routers import community, auth, owner, employee, public
+from routers import community, auth, owner, employee, public, admin
 
 import firebase_init
 from firebase_admin import messaging
@@ -32,6 +32,7 @@ app.include_router(owner.router)
 app.include_router(employee.router)
 app.include_router(community.router)
 app.include_router(public.router)
+app.include_router(admin.router)
 
 
 # ===== CORS ===== #
