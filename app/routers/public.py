@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 from database import get_db
 from typing import Optional, List
 
-from models import Store, StoreMap, StoreCommunity, StoreCommunityComment, StoreMembers, Member, Notice, Faq, Feedback
+from models import Store, StoreMap, StoreCommunity, StoreCommunityComment, StoreMembers, Member, Notice, Faq, Feedback, Notification
 from utils.auth_utils import password_encode, password_decode
 from utils.uitls import create_store_code
 from schemas.public import BoardCreateResponse, BoardRequest, BoardResponse, BoardDetailResponse, CommentCreateRequest, PasswordRequest, StoreRequest
@@ -453,3 +453,30 @@ async def get_personal_feedback(id: int, db: Session = Depends(get_db)):
     # TODO: 추후 ID는 JWT 토큰에서 꺼내오도록 수정
     feedbacks = db.query(Feedback).filter(Feedback.member_id == id).order_by(Feedback.created_at.desc()).all()
     return feedbacks
+
+@router.get("/notification/{id}")
+async def get_personal_notification(id: int, unread_only: bool = False, db: Session = Depends(get_db)):
+    """
+    ----------------------------------------
+    유저 개인별 알림 조회 API
+
+    * 내림차순 정렬
+    ----------------------------------------
+    """
+        
+    # TODO: 추후 ID는 JWT 토큰에서 꺼내오도록 수정
+    query = db.query(Notification).filter(Notification.employee_id == id)
+
+    if unread_only:
+        query = query.filter(Notification.is_read == False)
+        
+    return query.order_by(desc(Notification.created_at)).all()
+
+@router.patch("/notification/{id}/read")
+async def mark_notification_read(id: int, db: Session = Depends(get_db)):
+    notification = db.query(Notification).filter(Notification.id == id).first()
+    if not notification:
+        raise HTTPException(status_code=404, detail="알림을 찾을 수 없습니다.")
+    notification.is_read = True
+    db.commit()
+    return {"success": True}

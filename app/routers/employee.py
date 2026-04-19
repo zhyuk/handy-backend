@@ -4,14 +4,15 @@ import json
 import base64
 from fastapi import APIRouter, Depends, Query, Cookie, HTTPException, Response, UploadFile, File, Form
 from sqlalchemy import asc, extract, text
-from sqlalchemy.orm import Session, joinedload
+from sqlalchemy.orm import Session, joinedload, aliased
 from pathlib import Path
 from dotenv import load_dotenv
 import uuid
 from datetime import datetime, timedelta, date
 from calendar import monthrange
+from typing import Optional
 
-from models import Member, Store, StoreMap, MemberRequest, StoreMembers, StoreMembersTodo, StoreMembersWork, StoreCommunity, StoreMembersWorkLog, StoreMembersDetail, ScheduleChangeRequest, DailyClosingReport, WorkLogChangeRequest
+from models import Member, Store, StoreMap, MemberRequest, StoreMembers, StoreMembersTodo, StoreMembersWork, StoreCommunity, StoreMembersWorkLog, StoreMembersDetail, ScheduleChangeRequest, DailyClosingReport, WorkLogChangeRequest, StorePart
 from database import get_db
 from schemas.employee import VerifyCode, MemberRequestSchemas, TodoListRequest, TodoListResponse, TodoListModifyRequest, WorkRequest, WrokResponse, NoticeResponse, WeeklyWorkRequest, WeeklyWorkResponse, MonthlyScheduleRequest, ClosingReportRequest, MyInfoModifyRequest, WorkTimeRequest, WorkMonthRequest, WorkChangeRequest, WorkChangeRequestLogSchemas
 from utils.uitls import format_phone_number, get_coords_from_address
@@ -19,9 +20,20 @@ from utils.uitls import format_phone_number, get_coords_from_address
 
 router = APIRouter(prefix="/api/employee", tags=["직원유형"])
 
+# 
 CLOSING_UPLOAD_DIR = "uploads/closing/"
 if not os.path.exists(CLOSING_UPLOAD_DIR):
     os.makedirs(CLOSING_UPLOAD_DIR)
+
+# 프로필사진 보관 폴더
+PROFILE_UPLOAD_DIR = "uploads/profile/"
+if not os.path.exists(PROFILE_UPLOAD_DIR):
+    os.makedirs(PROFILE_UPLOAD_DIR)
+
+# 이력서 / 근로계약서 / 보건증 파일 보관 폴더
+DOCUMENT_UPLOAD_DIR = "uploads/documents/"
+if not os.path.exists(DOCUMENT_UPLOAD_DIR):
+    os.makedirs(DOCUMENT_UPLOAD_DIR)
 
 # ======= 매장코드 조회 ======= #
 @router.post("/verify-code")
@@ -800,13 +812,42 @@ def get_my_info(employee_id: int, store_id: int, db: Session = Depends(get_db)):
     # 입사 경과일 계산
     days_since_joined = (date.today() - store_member.joined_at.date()).days + 1
 
+    # 근무 스케줄 조회
+    from collections import defaultdict
+    day_names = {1: "월", 2: "화", 3: "수", 4: "목", 5: "금", 6: "토", 7: "일"}
+
+    schedules = (
+        db.query(StoreMembersWork, StorePart)
+        .outerjoin(StorePart, StoreMembersWork.part_id == StorePart.id)
+        .filter(
+            StoreMembersWork.employee_id == employee_id,
+            StoreMembersWork.store_id == store_id,
+            StoreMembersWork.is_holiday == False,
+            StoreMembersWork.part_id != None,
+        )
+        .order_by(StoreMembersWork.day_of_week, StoreMembersWork.part_id)
+        .all()
+    )
+
+    day_map = defaultdict(lambda: {"day": "", "time": "", "tags": []})
+    for work, part in schedules:
+        if work.work_start and work.work_end:
+            key = work.day_of_week
+            if not day_map[key]["day"]:
+                day_map[key]["day"] = day_names.get(key, "")
+                day_map[key]["time"] = f"{work.work_start.strftime('%H:%M')} ~ {work.work_end.strftime('%H:%M')}"
+            if part and part.name:
+                day_map[key]["tags"].append(part.name)
+
+    schedule_list = [day_map[k] for k in sorted(day_map.keys())]
+
     return {
         "name": member.name,
         "birth": member.birth.strftime("%Y.%m.%d") if member.birth else None,
         "age": age,
         "gender": "남자" if member.gender == "male" else "여자" if member.gender == "female" else None,
         "phone": member.phone,
-        "image_url": None,
+        "image_url": store_member.image_url,
         "bank": store_member.bank,
         "account_number": store_member.accountNumber,
         "joined_at": store_member.joined_at.strftime("%Y.%m.%d"),
@@ -828,108 +869,75 @@ def get_my_info(employee_id: int, store_id: int, db: Session = Depends(get_db)):
         "resume": detail.resume if detail else None,
         "employment_contract": detail.employment_contract if detail else None,
         "health_certificate": detail.health_certificate if detail else None,
+        "schedule": schedule_list,
     }
 
 @router.post("/mypage/edit")
-def get_my_info(body: MyInfoModifyRequest, db: Session = Depends(get_db)):
+async def edit_my_info(
+    name: str = Form(...),
+    bank: str = Form(...),
+    account_number: str = Form(...),
+    image: Optional[UploadFile] = File(None),
+    original_image_url: Optional[str] = Form(None),
+    resume: Optional[UploadFile] = File(None),
+    employment_contract: Optional[UploadFile] = File(None),
+    health_certificate: Optional[UploadFile] = File(None),
+    db: Session = Depends(get_db)
+    ):
     """
     ----------------------------------------
     [직원] 마이페이지 정보 수정 API
 
-    * 이름 / 은행 / 계좌번호 / 이력서 / 근로계약서 / 보건증 수정 가능
+    * 프로필이미지 / 이름 / 은행 / 계좌번호 / 이력서 / 근로계약서 / 보건증 수정 가능
 
     ----------------------------------------
     """
-    print(body)
 
-    # TODO: 추후 JWT 토큰을 활용하여 동적으로 유저 가져오도록 수정
     user = db.query(StoreMembers).filter(StoreMembers.member_id == 1).first()
-
     if not user:
         raise HTTPException(status_code=404, detail="사용자 정보를 찾을 수 없습니다.")
     
-    # TODO: 이름 수정하는 부분은 추후 수정해야함. -> 어떻게 처리할지
-    user.bank = body.bank
-    user.accountNumber = body.accountNumber
+    user_detail = db.query(StoreMembersDetail).filter(StoreMembersDetail.store_member_id == user.id).first()
+
+    user.bank = bank
+    user.accountNumber = account_number
+
+    # 프로필 이미지
+    if image:
+        if original_image_url:
+            old_path = original_image_url.lstrip("/")
+            if os.path.exists(old_path):
+                os.remove(old_path)
+        ext = os.path.splitext(image.filename)[1]
+        filename = f"{uuid.uuid4()}{ext}"
+        filepath = os.path.join(PROFILE_UPLOAD_DIR, filename)
+        with open(filepath, "wb") as f:
+            f.write(await image.read())
+        user.image_url = f"/uploads/profile/{filename}"
+
+    # 문서 저장 헬퍼
+    async def save_document(file: UploadFile) -> str:
+        ext = os.path.splitext(file.filename)[1]
+        filename = f"{uuid.uuid4()}{ext}"
+        filepath = os.path.join(DOCUMENT_UPLOAD_DIR, filename)
+        with open(filepath, "wb") as f:
+            f.write(await file.read())
+        return f"/uploads/documents/{filename}"
+
+    if resume:
+        user_detail.resume = await save_document(resume)
+    if employment_contract:
+        user_detail.employment_contract = await save_document(employment_contract)
+    if health_certificate:
+        user_detail.health_certificate = await save_document(health_certificate)
 
     try:
         db.commit()
-
-    except Exception as e:
+        db.refresh(user)
+        return {"message": "수정되었습니다."}
+    except Exception:
         db.rollback()
         raise HTTPException(status_code=500, detail="서버 오류로 인해 정보 수정에 실패했습니다.")
-
-
-@router.get("/mypage")
-def get_my_info(employee_id: int, store_id: int, db: Session = Depends(get_db)):
-    """
-    ----------------------------------------
-    직원 마이페이지 정보 조회 API
-
-    * employee_id: store_members.id
-    * members + store_members + store_members_detail 조인하여 반환
-    ----------------------------------------
-    """
-    print("employee_id : " , employee_id)
-    print("store_id : " , store_id)
-
-    result = (
-        db.query(StoreMembers, Member, StoreMembersDetail)
-        .join(Member, StoreMembers.member_id == Member.id)
-        .outerjoin(StoreMembersDetail, StoreMembersDetail.store_member_id == StoreMembers.id)
-        .filter(StoreMembers.id == employee_id)
-        .first()
-    )
-
-    if not result:
-        raise HTTPException(status_code=404, detail="직원 정보를 찾을 수 없습니다.")
-
-    store_member, member, detail = result
-
-    store = db.query(Store).filter(Store.id == store_id).first()
-    store_name = store.name if store else None
-
-    # 나이 계산
-    age = None
-    if member.birth:
-        today = date.today()
-        age = today.year - member.birth.year - (
-            (today.month, today.day) < (member.birth.month, member.birth.day)
-        )
-
-    # 입사 경과일 계산
-    days_since_joined = (date.today() - store_member.joined_at.date()).days + 1
-
-    return {
-        "name": member.name,
-        "birth": member.birth.strftime("%Y.%m.%d") if member.birth else None,
-        "age": age,
-        "gender": "남자" if member.gender == "male" else "여자" if member.gender == "female" else None,
-        "phone": member.phone,
-        "image_url": None,
-        "bank": store_member.bank,
-        "account_number": store_member.accountNumber,
-        "joined_at": store_member.joined_at.strftime("%Y.%m.%d"),
-        "days_since_joined": days_since_joined,
-        "store_name": store_name,
-        "role": store_member.role,
-        "employee_type": detail.employee_type if detail else None,
-        "salary_cycle": detail.salary_cycle if detail else None,
-        "salary_day": detail.salary_day if detail else None,
-        "hourly_rate": detail.hourly_rate if detail else None,
-        "is_probation": detail.is_probation if detail else False,
-        "income_tax": detail.income_tax if detail else None,
-        "local_income_tax": detail.local_income_tax if detail else None,
-        "national_pension_tax": detail.national_pension_tax if detail else None,
-        "health_insurance_tax": detail.health_insurance_tax if detail else None,
-        "long_term_care_tax": detail.long_term_care_tax if detail else None,
-        "employment_insurance_tax": detail.employment_insurance_tax if detail else None,
-        "industrial_accident_tax": detail.industrial_accident_tax if detail else None,
-        "resume": detail.resume if detail else None,
-        "employment_contract": detail.employment_contract if detail else None,
-        "health_certificate": detail.health_certificate if detail else None,
-    }
-
 
 # ======= 근태 관리 ======= #
 @router.post("/work/clock-in")
@@ -1001,7 +1009,8 @@ def add_clock_out(body: WorkTimeRequest, db: Session = Depends(get_db)):
     
     workLog.end_time = datetime.now()
     workLog.status = "off_work"
-    if workLog.break_end_time.is_(None):
+
+    if workLog.break_end_time is None:
         workLog.break_end_time = datetime.now()
 
     db.commit()
@@ -1200,3 +1209,49 @@ async def work_log_change_request(employee_id: int, store_id: int, db: Session =
         WorkLogChangeRequest.store_id == store_id,
     ).order_by(WorkLogChangeRequest.created_at.desc()).all()
     return requests
+
+@router.get("/schedule-change/{id}")
+async def get_schedule_change(id: int, db: Session = Depends(get_db)):
+    """
+    ----------------------------------------
+    [직원] 변경된 스케줄 조회 API
+    ----------------------------------------
+    """
+    change = db.query(ScheduleChangeRequest).filter(ScheduleChangeRequest.id == id).first()
+    
+    # 기존 일정으로 store_members_work 매칭
+    work = db.query(StoreMembersWork).filter(
+        StoreMembersWork.work_date == change.origin_date,
+        StoreMembersWork.work_start == change.origin_start,
+        StoreMembersWork.work_end == change.origin_end,
+    ).first()
+    
+    part = db.query(StorePart).filter(StorePart.id == work.part_id).first() if work else None
+
+    return {
+        "type": change.type,
+        "origin_date": change.origin_date,
+        "origin_start": change.origin_start,
+        "origin_end": change.origin_end,
+        "desired_date": change.desired_date,
+        "desired_start": change.desired_start,
+        "desired_end": change.desired_end,
+        "part_name": part.name if part else None,
+    }
+
+@router.get("/schedule-work/{id}")
+async def get_schedule_work(id: int, db: Session = Depends(get_db)):
+    """
+    ----------------------------------------
+    [직원] 추가된 스케줄 조회 API
+    ----------------------------------------
+    """
+    work = db.query(StoreMembersWork).filter(StoreMembersWork.id == id).first()
+    part = db.query(StorePart).filter(StorePart.id == work.part_id).first()
+    
+    return {
+        "work_date": work.work_date,
+        "work_start": work.work_start,
+        "work_end": work.work_end,
+        "part_name": part.name if part else None,
+    }

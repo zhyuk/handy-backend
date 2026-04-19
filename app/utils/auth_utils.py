@@ -5,7 +5,7 @@ import base64
 import secrets
 import redis
 import requests
-from fastapi import Cookie, Response
+from fastapi import Cookie, Response, HTTPException
 from sqlalchemy.orm import Session
 from dotenv import load_dotenv
 from passlib.context import CryptContext
@@ -172,7 +172,7 @@ def decode_temp_signup_token(signup_token: str | None = Cookie(None)):
 # ===================================================== 임시토큰 ===================================================== #
 
 # ===================================================== JWT TOKENS ===================================================== #
-ACCESS_TOKEN_EXPIRE = timedelta(minutes=15)
+ACCESS_TOKEN_EXPIRE = timedelta(hours=24)
 REFRESH_TOKEN_EXPIRE = timedelta(days=7)
 
 def create_access_token(member_id: int):
@@ -212,7 +212,7 @@ def verify_token(token: str, token_type: str = "access"):
         member_id = payload.get("member_id")
         input_token_type = payload.get("type")
 
-        if not input_token_type != token_type:
+        if input_token_type != token_type:
             return None, "invalid"
         
         return member_id, None

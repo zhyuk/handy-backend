@@ -139,6 +139,7 @@ class StoreMembers(Base):
     role = Column(String(10), server_default="employee")
     bank = Column(String(50), nullable=True)
     accountNumber = Column(String(100), nullable=True)
+    image_url = Column(String(500), nullable=True)
     joined_at = Column(DateTime, server_default=func.now())
 
     # 기본 관계
@@ -158,6 +159,7 @@ class StoreMembers(Base):
 
     closing_reports = relationship("DailyClosingReport", back_populates="employee", cascade="all, delete-orphan")
     work_log_requests = relationship("WorkLogChangeRequest", back_populates="employee", cascade="all, delete-orphan")
+    notifications = relationship("Notification", back_populates="employee", cascade="all, delete-orphan")
 
 class StoreMembersDetail(Base):
     __tablename__ = "store_members_detail"
@@ -390,3 +392,16 @@ class Feedback(Base):
     answered_at = Column(DateTime, onupdate=func.now(), comment="답변 일시")
 
     member = relationship("Member", back_populates="feedbacks")
+
+class Notification(Base):
+    __tablename__ = "notifications"
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True, comment="알림 고유번호")
+    employee_id = Column(BigInteger, ForeignKey("store_members.id"), nullable=False, comment="직원 고유번호")
+    type = Column(String(20), nullable=False, comment="알림 유형")
+    message = Column(String(200), nullable=False, comment="알림 내용")
+    reference_id = Column(BigInteger, nullable=True, comment="연관 데이터 ID")
+    is_read = Column(Boolean, server_default="false", comment="읽음 여부")
+    created_at = Column(DateTime, server_default=func.now(), comment="알림 발생 시간")
+
+    employee = relationship("StoreMembers", back_populates="notifications")

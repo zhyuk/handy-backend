@@ -98,3 +98,8 @@ async def add_store_request(
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=500, detail="데이터 저장 중 오류가 발생했습니다.")
+    
+
+# TODO: 직원 스케줄(근무표) 변경요청 수락 시, StoreMemberWork 업데이트 진행.
+# TODO: 매장 공지사항 작성 시, Notification에 데이터 추가. employee_id는 해당 매장에 재직 중인 모두
+# TODO: 사장이 급여 명세서 발행하면 직원의 급여 명세서 관련 부분 구현해야함.

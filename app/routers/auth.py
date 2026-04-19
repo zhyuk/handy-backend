@@ -14,7 +14,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 from datetime import datetime, timedelta
 
-from models import Member, SocialAccount, JwtTokens
+from models import Member, SocialAccount, JwtTokens, StoreMembers, Store, StoreMembersDetail
 from database import get_db, SessionLocal
 from utils.auth_utils import normalize_phone, normalize_birth, convert_gender, password_encode, password_decode, generate_code, save_code, send_code_to_user, verify_code, check_daily_limit, add_token_for_cookie, encode_temp_signup_token, decode_temp_signup_token, verify_token
 from schemas.login import ValidLogin, Signup, PhoneReq, VerifyReq, AppleCallbackRequest
@@ -44,16 +44,85 @@ router = APIRouter(prefix="/api/auth", tags=["소셜 로그인 관리"])
 
 _state_store = {}
 
+def get_current_member(access_token: str = Cookie(None), db: Session = Depends(get_db)):
+    if not access_token:
+        raise HTTPException(status_code=401, detail="로그인이 필요합니다.")
+    
+    member_id, error = verify_token(access_token, "access")
+    print("member_id:", member_id, "error:", error)
+    
+    if error or not member_id:
+        raise HTTPException(status_code=401, detail="유효하지 않은 토큰입니다.")
+    
+    member = db.query(Member).filter(Member.id == member_id).first()
+    print("member:", member)
+    
+    if not member:
+        raise HTTPException(status_code=404, detail="사용자를 찾을 수 없습니다.")
+    
+    return member
+
 # ===================================================== JWT 토큰 검증 ===================================================== #
-@router.post("/me")
-def verify_tokens(access_token: str = Cookie(None)):
+# @router.post("/me")
+# def verify_tokens(access_token: str = Cookie(None)):
+#     """
+#     ----------------------------------------
+#     JWT 토큰 검증 API
+#     ----------------------------------------
+#     """
+#     return verify_token(access_token, "access")
+
+@router.get("/me")
+def get_me(access_token: str = Cookie(None), db: Session = Depends(get_db)):
     """
     ----------------------------------------
-    JWT 토큰 검증 API
+    토큰에서 유저 정보 꺼내와 실제 유저 데이터 리턴 API
     ----------------------------------------
     """
-    return verify_token(access_token, "access")
+
+    if not access_token:
+        raise HTTPException(status_code=401, detail="로그인이 필요합니다.")
+    
+    member_id, error = verify_token(access_token, "access")
+    
+    if error == "expired":
+        raise HTTPException(status_code=401, detail="토큰이 만료됐습니다.")
+    if error or not member_id:
+        raise HTTPException(status_code=401, detail="유효하지 않은 토큰입니다.")
+    
+    member = db.query(Member).filter(Member.id == member_id).first()
+    if not member:
+        raise HTTPException(status_code=404, detail="사용자를 찾을 수 없습니다.")
+    
+    return {
+        "id": member.id,
+        "name": member.name,
+        "phone": member.phone,
+    }
 # ===================================================== JWT 토큰 검증 ===================================================== #
+
+@router.get("/my/stores")
+def get_my_stores(
+    current_member: Member = Depends(get_current_member),
+    db: Session = Depends(get_db)
+):
+    store_members = (
+        db.query(StoreMembers, Store, StoreMembersDetail)
+        .join(Store, StoreMembers.store_id == Store.id)
+        .outerjoin(StoreMembersDetail, StoreMembersDetail.store_member_id == StoreMembers.id)
+        .filter(StoreMembers.member_id == current_member.id)
+        .all()
+    )
+    return [
+        {
+            "store_member_id": sm.id,
+            "store_id": store.id,
+            "store_name": store.name,
+            "role": sm.role,
+            "employee_type": detail.employee_type if detail else None,
+        }
+        for sm, store, detail in store_members
+    ]
 
 # ===================================================== 일반 로그인 ===================================================== #
 @router.post("/login")
@@ -74,7 +143,12 @@ def general_login(req: ValidLogin, response: Response, db: Session = Depends(get
         
     add_token_for_cookie(user.id, db, response)
 
-    return {"success": True}
+    return {
+    "stores": [
+        {"store_member_id": sm.id, "store_id": sm.store_id, "role": sm.role}
+        for sm in db.query(StoreMembers).filter(StoreMembers.member_id == user.id).all()
+    ]
+}
 # ===================================================== 일반 로그인 ===================================================== #
       
 # ===================================================== 인증번호 ===================================================== #
