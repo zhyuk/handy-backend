@@ -1,6 +1,5 @@
-import os, shutil
+import os
 import uuid
-import secrets
 import json
 from fastapi import APIRouter, Depends, HTTPException, Form, File, UploadFile
 from sqlalchemy import desc, func
@@ -10,113 +9,45 @@ from typing import Optional, List
 
 from models import Store, StoreMap, StoreCommunity, StoreCommunityComment, StoreMembers, Member, Notice, Faq, Feedback, Notification
 from utils.auth_utils import password_encode, password_decode
-from utils.uitls import create_store_code
-from schemas.public import BoardCreateResponse, BoardRequest, BoardResponse, BoardDetailResponse, CommentCreateRequest, PasswordRequest, StoreRequest
-
+from schemas.public import BoardRequest, BoardResponse, BoardDetailResponse, CommentCreateRequest, PasswordRequest, StoreRequest
+from routers.auth import get_current_member_with_refresh
 
 router = APIRouter(prefix="/api/common", tags=["공통 기능"])
 
+for _dir in ["uploads/board/", "uploads/feedback/"]:
+    os.makedirs(_dir, exist_ok=True)
+
 BOARD_UPLOAD_DIR = "uploads/board/"
-if not os.path.exists(BOARD_UPLOAD_DIR):
-    os.makedirs(BOARD_UPLOAD_DIR, exist_ok=True)
-
 FEEDBACK_UPLOAD_DIR = "uploads/feedback/"
-if not os.path.exists(FEEDBACK_UPLOAD_DIR):
-    os.makedirs(FEEDBACK_UPLOAD_DIR, exist_ok=True)
 
-@router.get("")
-async def add_stores(db: Session = Depends(get_db)):
-    """
-    ----------------------------------------
-    승인된 매장 정보 추가 API
 
-    * 관리자가 사업자등록증 사진을 보고 승인을 누른 경우 동작하는 API
-    ----------------------------------------
-    """
-    store_code = create_store_code(db)
+async def save_upload(file: UploadFile, upload_dir: str) -> str:
+    ext = os.path.splitext(file.filename)[1]
+    filename = f"{uuid.uuid4()}{ext}"
+    filepath = os.path.join(upload_dir, filename)
+    with open(filepath, "wb") as f:
+        f.write(await file.read())
+    return f"/{upload_dir}{filename}"
 
+
+# ==================== 매장 위치 ==================== #
 @router.post("/store/map")
 async def get_store_map(req: StoreRequest, db: Session = Depends(get_db)):
-    """
-    ----------------------------------------
-    매장 위치 정보 리턴 API
-    ----------------------------------------
-    """
     store_map = db.query(StoreMap).filter(StoreMap.store_id == req.store_id).first()
     if not store_map:
         raise HTTPException(status_code=404, detail="매장 위치 정보가 없습니다.")
-    
+
     store = db.query(Store).filter(Store.id == req.store_id).first()
     if not store:
         raise HTTPException(status_code=404, detail="매장 정보가 없습니다.")
 
-    return {
-        "lat": store_map.lat,
-        "lng": store_map.lng,
-        "radius": store.radius
-    }
+    return {"lat": store_map.lat, "lng": store_map.lng, "radius": store.radius}
 
-    
-# ==================== 게시글 관련 ==================== #
+
+# ==================== 게시글 ==================== #
 @router.post("/board", response_model=list[BoardResponse])
-async def get_boardList(req: BoardRequest, db: Session = Depends(get_db)):
-    """
-    ----------------------------------------
-    매장별 게시판 글 목록 조회 API
-    ----------------------------------------
-    """
-
-    # print("board_list req : ", req)
-
-
+async def get_board_list(req: BoardRequest, db: Session = Depends(get_db)):
     results = (
-            db.query(
-                StoreCommunity, 
-                Member.name, 
-                StoreMembers.role,
-                func.count(StoreCommunityComment.id).label("comment_count") # 댓글 수 집계
-            )
-            .join(StoreMembers, StoreMembers.id == StoreCommunity.employee_id)
-            .join(Member, Member.id == StoreMembers.member_id)
-            .outerjoin(
-                StoreCommunityComment, 
-                (StoreCommunityComment.community_id == StoreCommunity.id) & 
-                (StoreCommunityComment.is_deleted == False)
-            )
-            .filter(
-                StoreCommunity.store_id == req.store_id,
-                StoreCommunity.is_deleted == False,
-            )
-            .group_by(StoreCommunity.id, Member.name, StoreMembers.role) # 집계 함수 사용 시 필수
-            .order_by(desc(StoreCommunity.created_at))
-            .all()
-        )
-
-    result = []
-    for board, author_name, role, comment_count in results:
-        result.append({
-            "id": board.id,
-            "category": board.category,
-            "title": board.title,
-            "content": board.content,
-            "created_at": board.created_at,
-            "writer": author_name,
-            "role": role,
-            "comments": comment_count  # 댓글이 없으면 0으로 들어갑니다.
-        })
-
-    return result
-
-@router.get("/board/{id}", response_model=BoardDetailResponse)
-async def get_boardList(id:int, db: Session = Depends(get_db)):
-    """
-    ----------------------------------------
-    매장별 게시판 글 상세 조회 API
-    ----------------------------------------
-    """
-    # print(id)
-
-    board_result = (
         db.query(
             StoreCommunity,
             Member.name,
@@ -126,30 +57,44 @@ async def get_boardList(id:int, db: Session = Depends(get_db)):
         .join(StoreMembers, StoreMembers.id == StoreCommunity.employee_id)
         .join(Member, Member.id == StoreMembers.member_id)
         .outerjoin(
-            StoreCommunityComment, 
+            StoreCommunityComment,
             (StoreCommunityComment.community_id == StoreCommunity.id) &
             (StoreCommunityComment.is_deleted == False)
         )
-        .filter(
-            StoreCommunity.id == id,
-            StoreCommunity.is_deleted == False
-        )
+        .filter(StoreCommunity.store_id == req.store_id, StoreCommunity.is_deleted == False)
+        .group_by(StoreCommunity.id, Member.name, StoreMembers.role)
+        .order_by(desc(StoreCommunity.created_at))
+        .all()
+    )
+
+    return [{
+        "id": b.id, "category": b.category, "title": b.title,
+        "content": b.content, "created_at": b.created_at,
+        "writer": name, "role": role, "comments": count
+    } for b, name, role, count in results]
+
+
+@router.get("/board/{id}", response_model=BoardDetailResponse)
+async def get_board_detail(id: int, db: Session = Depends(get_db)):
+    board_result = (
+        db.query(StoreCommunity, Member.name, StoreMembers.role,
+                 func.count(StoreCommunityComment.id).label("comment_count"))
+        .join(StoreMembers, StoreMembers.id == StoreCommunity.employee_id)
+        .join(Member, Member.id == StoreMembers.member_id)
+        .outerjoin(StoreCommunityComment,
+                   (StoreCommunityComment.community_id == StoreCommunity.id) &
+                   (StoreCommunityComment.is_deleted == False))
+        .filter(StoreCommunity.id == id, StoreCommunity.is_deleted == False)
         .group_by(StoreCommunity.id, Member.name, StoreMembers.role)
         .first()
     )
-
     if not board_result:
         raise HTTPException(status_code=404, detail="게시글을 찾을 수 없습니다.")
 
     board, author_name, role, comment_count = board_result
 
-    # 댓글 조회 (community_id 기준, is_deleted 컬럼 없으면 제거)
     comments = (
-        db.query(
-            StoreCommunityComment,
-            Member.name.label("commenter_name"),
-            StoreMembers.role.label("commenter_role")
-        )
+        db.query(StoreCommunityComment, Member.name.label("commenter_name"), StoreMembers.role.label("commenter_role"))
         .join(StoreMembers, StoreMembers.id == StoreCommunityComment.employee_id)
         .join(Member, Member.id == StoreMembers.member_id)
         .filter(StoreCommunityComment.community_id == id, StoreCommunityComment.is_deleted == False)
@@ -157,71 +102,50 @@ async def get_boardList(id:int, db: Session = Depends(get_db)):
         .all()
     )
 
-    comment_list = []
-    for comment, commenter_name, commenter_role in comments:
-        comment_list.append({
-            "id": comment.id,
-            "content": comment.content,
-            "created_at": comment.created_at,
-            "parent_id": comment.parent_id,
-            "writer": commenter_name,
-            "role": commenter_role,
-        })
-
     return {
-        "id": board.id,
-        "category": board.category,
-        "title": board.title,
-        "content": board.content,
-        "created_at": board.created_at,
-        "writer": author_name,
-        "role": role,
-        "comment_count": comment_count,
-        "comments": comment_list,
+        "id": board.id, "category": board.category, "title": board.title,
+        "content": board.content, "created_at": board.created_at,
+        "writer": author_name, "role": role, "comment_count": comment_count,
+        "comments": [{"id": c.id, "content": c.content, "created_at": c.created_at,
+                      "parent_id": c.parent_id, "writer": name, "role": r}
+                     for c, name, r in comments],
         "photos": board.image if board.image else []
     }
 
+
 @router.post("/board/add")
-async def add_board(    
+async def add_board(
     store_id: int = Form(...),
-    employee_id: int = Form(...),
     category: str = Form(...),
     title: str = Form(...),
     content: str = Form(...),
     images: Optional[List[UploadFile]] = File(default=None),
-    db: Session = Depends(get_db)):
-    """
-    ----------------------------------------
-    게시판 글 추가 API
-    ----------------------------------------
-    """
+    current_member: Member = Depends(get_current_member_with_refresh),
+    db: Session = Depends(get_db)
+):
+    employee = db.query(StoreMembers).filter(
+        StoreMembers.store_id == store_id,
+        StoreMembers.member_id == current_member.id
+    ).first()
+    if not employee:
+        raise HTTPException(status_code=404, detail="직원 정보를 찾을 수 없습니다.")
 
-    image_urls = []
-
-    if images:
-        for image in images:
-            ext = os.path.splitext(image.filename)[1]
-            new_filename = f"{uuid.uuid4()}{ext}"
-            file_path = os.path.join(BOARD_UPLOAD_DIR, new_filename)
-            content_data = await image.read()
-            with open(file_path, "wb") as f:
-                f.write(content_data)
-            image_urls.append(f"/uploads/board/{new_filename}")
+    image_urls = [await save_upload(img, BOARD_UPLOAD_DIR) for img in images] if images else []
 
     board = StoreCommunity(
         store_id=store_id,
-        employee_id=employee_id,
+        employee_id=employee.id,
         category=category,
         title=title,
         content=content,
         image=image_urls if image_urls else None,
     )
-
     db.add(board)
     db.commit()
 
+
 @router.post("/board/modify")
-async def modify_board(    
+async def modify_board(
     board_id: int = Form(...),
     category: str = Form(...),
     title: str = Form(...),
@@ -229,36 +153,18 @@ async def modify_board(
     clear_images: bool = Form(default=False),
     images: Optional[List[UploadFile]] = File(default=None),
     existing_images: Optional[str] = Form(default=None),
-    db: Session = Depends(get_db)):
-
-    """
-    ----------------------------------------
-    게시글 수정 API
-    ----------------------------------------
-    """
-
-
+    db: Session = Depends(get_db)
+):
     board = db.query(StoreCommunity).filter(StoreCommunity.id == board_id).first()
-
     if not board:
         raise HTTPException(status_code=404, detail="게시글을 찾을 수 없습니다.")
 
-    image_urls = []
-    if images:
-        for image in images:
-            ext = os.path.splitext(image.filename)[1]
-            new_filename = f"{uuid.uuid4()}{ext}"
-            file_path = os.path.join(BOARD_UPLOAD_DIR, new_filename)
-            content_data = await image.read()
-            with open(file_path, "wb") as f:
-                f.write(content_data)
-            image_urls.append(f"/uploads/board/{new_filename}")
+    image_urls = [await save_upload(img, BOARD_UPLOAD_DIR) for img in images] if images else []
+    existing_urls = json.loads(existing_images) if existing_images else []
 
     board.category = category
     board.title = title
     board.content = content
-    
-    existing_urls = json.loads(existing_images) if existing_images else []
 
     if clear_images:
         board.image = None
@@ -268,41 +174,40 @@ async def modify_board(
     db.commit()
     return {"message": "게시글이 수정되었습니다."}
 
+
 @router.delete("/board/{id}")
 async def delete_post(id: int, db: Session = Depends(get_db)):
-    """
-    ----------------------------------------
-    게시글 삭제 API
-    ----------------------------------------
-    """
-
     board = db.query(StoreCommunity).filter(StoreCommunity.id == id).first()
-
     if not board:
         raise HTTPException(status_code=404, detail="게시글을 찾을 수 없습니다.")
-    
     board.is_deleted = True
-
     db.commit()
     return {"message": "게시글이 삭제되었습니다."}
 
-# ==================== 게시글 관련 종료 ==================== #
 
-
-# ==================== 댓글 관련 ==================== #
+# ==================== 댓글 ==================== #
 @router.post("/board/{id}/comment")
-async def add_comment(id: int, body: CommentCreateRequest, db: Session = Depends(get_db)):
-    """
-    ----------------------------------------
-    게시판 댓글 추가 API
-    ----------------------------------------
-    """
+async def add_comment(
+    id: int,
+    body: CommentCreateRequest,
+    current_member: Member = Depends(get_current_member_with_refresh),
+    db: Session = Depends(get_db)
+):
+    # community로 store_id 조회 후 employee 찾기
+    board = db.query(StoreCommunity).filter(StoreCommunity.id == id).first()
+    if not board:
+        raise HTTPException(status_code=404, detail="게시글을 찾을 수 없습니다.")
 
-    print(id)
-    print(body)
+    employee = db.query(StoreMembers).filter(
+        StoreMembers.store_id == board.store_id,
+        StoreMembers.member_id == current_member.id
+    ).first()
+    if not employee:
+        raise HTTPException(status_code=404, detail="직원 정보를 찾을 수 없습니다.")
+
     comment = StoreCommunityComment(
         community_id=id,
-        employee_id=body.employee_id,
+        employee_id=employee.id,
         parent_id=body.parent_id,
         content=body.content,
     )
@@ -311,128 +216,71 @@ async def add_comment(id: int, body: CommentCreateRequest, db: Session = Depends
     db.refresh(comment)
     return {"message": "댓글이 등록되었습니다."}
 
+
 @router.delete("/board/comment/{comment_id}")
-async def delete_comment(comment_id: int,  db: Session = Depends(get_db)):
-    """
-    ----------------------------------------
-    게시판 댓글 삭제 API
-    ----------------------------------------
-    """
-    # print(comment_id)
-
+async def delete_comment(comment_id: int, db: Session = Depends(get_db)):
     comment = db.query(StoreCommunityComment).filter(StoreCommunityComment.id == comment_id).first()
-
     if not comment:
         raise HTTPException(status_code=404, detail="댓글을 찾을 수 없습니다.")
-    
-    comment.is_deleted = True
 
+    comment.is_deleted = True
     if comment.parent_id is None:
-        recomments = db.query(StoreCommunityComment).filter(
+        for recomment in db.query(StoreCommunityComment).filter(
             StoreCommunityComment.parent_id == comment.id
-        ).all()
-        for recomment in recomments:
+        ).all():
             recomment.is_deleted = True
 
     db.commit()
     return {"message": "댓글이 삭제되었습니다."}
-# ==================== 댓글 관련 종료 ==================== #
+
 
 # ==================== 비밀번호 변경 ==================== #
 @router.post("/password/change")
-async def change_password(req: PasswordRequest, db: Session = Depends(get_db)):
-    """
-    ----------------------------------------
-    사용자 비밀번호 변경 API
-    ----------------------------------------
-    """
-    print(req)
-
-    # TODO: 추후 JWT 토큰을 쿠키에서 꺼내오는 방식으로 수정
-    user = db.query(Member).filter(Member.id == req.user_id).first()
-
-    if not user:
-        raise HTTPException(status_code=404, detail="사용자 정보를 찾을 수 없습니다.")
-    
-
-    if not password_decode(req.old_password, user.password):
+async def change_password(
+    req: PasswordRequest,
+    current_member: Member = Depends(get_current_member_with_refresh),
+    db: Session = Depends(get_db)
+):
+    if not password_decode(req.old_password, current_member.password):
         raise HTTPException(status_code=401, detail="기존 비밀번호가 일치하지 않습니다.")
-    
-    user.password = password_encode(req.new_password)
 
+    current_member.password = password_encode(req.new_password)
     try:
         db.commit()
-
-    except Exception as e:
+    except Exception:
         db.rollback()
         raise HTTPException(status_code=500, detail="서버 오류로 인해 비밀번호를 변경하지 못했습니다.")
-# ==================== 비밀번호 변경 ==================== #
 
+
+# ==================== 공지사항 / FAQ ==================== #
 @router.get("/notice")
 async def get_notice(db: Session = Depends(get_db)):
-    """
-    ----------------------------------------
-    핸디 서비스 내 공지사항 조회 API
-    ----------------------------------------
-    """
+    return db.query(Notice).filter(Notice.is_deleted == False).order_by(desc(Notice.created_at)).all()
 
-    notice = db.query(Notice).filter(Notice.is_deleted == False).order_by(desc(Notice.created_at)).all()
-    ()
-
-    return notice
 
 @router.get("/notice/{id}")
 async def get_notice_detail(id: int, db: Session = Depends(get_db)):
-    """
-    ----------------------------------------
-    핸디 서비스 내 공지사항 세부목록 조회 API
-    ----------------------------------------
-    """
-
-    noticeDetail = db.query(Notice).filter(Notice.is_deleted == False, Notice.id == id).first()
-
-    return noticeDetail
+    return db.query(Notice).filter(Notice.is_deleted == False, Notice.id == id).first()
 
 
 @router.get("/faq")
 async def get_faq(db: Session = Depends(get_db)):
-    """
-    ----------------------------------------
-    자주 묻는 질문 조회 API
-    ----------------------------------------
-    """
+    return db.query(Faq).filter(Faq.is_deleted == False).order_by(Faq.id).all()
 
-    results = db.query(Faq).filter(Faq.is_deleted == False).order_by(Faq.id).all()
 
-    return results
-
+# ==================== 건의함 ==================== #
 @router.post("/feedback")
 async def post_feedback(
-    member_id: int = Form(...),
     title: str = Form(...),
     content: str = Form(...),
     images: Optional[List[UploadFile]] = File(None),
+    current_member: Member = Depends(get_current_member_with_refresh),
     db: Session = Depends(get_db)
-    ):
-    """
-    ----------------------------------------
-    고객 건의함 작성 API
-    ----------------------------------------
-    """
-
-    image_urls = []
-    if images:
-        for image in images:
-            ext = os.path.splitext(image.filename)[1]
-            new_filename = f"{uuid.uuid4()}{ext}"
-            file_path = os.path.join(FEEDBACK_UPLOAD_DIR, new_filename)
-            content_data = await image.read()
-            with open(file_path, "wb") as f:
-                f.write(content_data)
-            image_urls.append(f"/uploads/feedback/{new_filename}")
+):
+    image_urls = [await save_upload(img, FEEDBACK_UPLOAD_DIR) for img in images] if images else []
 
     feedback = Feedback(
-        member_id=member_id,
+        member_id=current_member.id,
         title=title,
         content=content,
         image=image_urls if image_urls else None,
@@ -442,35 +290,29 @@ async def post_feedback(
     db.refresh(feedback)
     return feedback
 
-@router.get("/feedback/{id}")
-async def get_personal_feedback(id: int, db: Session = Depends(get_db)):
-    """
-    ----------------------------------------
-    고객 건의내역 조회 API
-    ----------------------------------------
-    """
 
-    # TODO: 추후 ID는 JWT 토큰에서 꺼내오도록 수정
-    feedbacks = db.query(Feedback).filter(Feedback.member_id == id).order_by(Feedback.created_at.desc()).all()
-    return feedbacks
+@router.get("/feedback")
+async def get_personal_feedback(
+    current_member: Member = Depends(get_current_member_with_refresh),
+    db: Session = Depends(get_db)
+):
+    return db.query(Feedback).filter(
+        Feedback.member_id == current_member.id
+    ).order_by(Feedback.created_at.desc()).all()
 
-@router.get("/notification/{id}")
-async def get_personal_notification(id: int, unread_only: bool = False, db: Session = Depends(get_db)):
-    """
-    ----------------------------------------
-    유저 개인별 알림 조회 API
 
-    * 내림차순 정렬
-    ----------------------------------------
-    """
-        
-    # TODO: 추후 ID는 JWT 토큰에서 꺼내오도록 수정
-    query = db.query(Notification).filter(Notification.employee_id == id)
-
+# ==================== 알림 ==================== #
+@router.get("/notification")
+async def get_personal_notification(
+    unread_only: bool = False,
+    current_member: Member = Depends(get_current_member_with_refresh),
+    db: Session = Depends(get_db)
+):
+    query = db.query(Notification).filter(Notification.employee_id == current_member.id)
     if unread_only:
         query = query.filter(Notification.is_read == False)
-        
     return query.order_by(desc(Notification.created_at)).all()
+
 
 @router.patch("/notification/{id}/read")
 async def mark_notification_read(id: int, db: Session = Depends(get_db)):

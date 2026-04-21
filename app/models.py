@@ -194,8 +194,10 @@ class StoreMembersTodo(Base):
 
     id = Column(BigInteger, primary_key=True, autoincrement=True)
     store_id = Column(BigInteger, ForeignKey("stores.id"), nullable=False)
-    employee_id = Column(BigInteger, ForeignKey("store_members.id"), nullable=False)
+    employee_id = Column(BigInteger, ForeignKey("store_members.id"), nullable=True)
+    type = Column(String(30), nullable=False, comment="공통 / 개인")
     content = Column(String(100), nullable=False)
+    created_at = Column(Date, server_default=func.now())
     is_achieved = Column(Boolean, server_default="false")
 
     store = relationship("Store", back_populates="all_todos")

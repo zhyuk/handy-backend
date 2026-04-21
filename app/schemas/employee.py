@@ -15,8 +15,8 @@ class MemberRequestSchemas(BaseModel):
     accountNumber: str
 
 # 근무일정 조회 스키마
-class WorkRequest(BaseModel):
-    employee_id: int
+# class WorkRequest(BaseModel):
+#     employee_id: int
 
 class WrokResponse(BaseModel):
     # day_of_week: int
@@ -34,6 +34,7 @@ class WrokResponse(BaseModel):
 # 체크리스트 조회 요청용 스키마
 class TodoListRequest(BaseModel):
     store_id: int
+    # employee_id: int
 
 # 체크리스트 조회 응답용 스키마
 class TodoListResponse(BaseModel):
@@ -45,8 +46,12 @@ class TodoListResponse(BaseModel):
         from_attributes = True
 
 # 체크리스트 상태변경 요청용 스키마
-class TodoListModifyRequest(TodoListRequest):
+class TodoListModifyRequest(BaseModel):
+    store_id: int
     id: int
+
+class NoticeRequestSchemas(BaseModel):
+    store_id: int
 
 class NoticeResponse(BaseModel):
     id: int
@@ -59,7 +64,7 @@ class NoticeResponse(BaseModel):
 
 class WeeklyWorkRequest(BaseModel):
     store_id: int
-    employee_id: int
+    # employee_id: int
 
 class WeeklyWorkResponse(BaseModel):
     day_of_week: int
@@ -72,13 +77,13 @@ class WeeklyWorkResponse(BaseModel):
     
 class MonthlyScheduleRequest(BaseModel):
     store_id: int
-    employee_id: int
+    # employee_id: int
     month: int
 
 
 class ClosingReportRequest(BaseModel):
     store_id: int
-    employee_id: int
+    # employee_id: int
     card_sales: int
     cash_sales: int
     transfer_sales: int
@@ -107,7 +112,7 @@ class WorkTimeRequest(BaseModel):
 
 # ===== 출근 기록 조회 스키마 ===== #
 class WorkMonthRequest(BaseModel):
-    employee_id: int
+    # employee_id: int
     store_id: int
     year: int
     month: int
@@ -115,7 +120,7 @@ class WorkMonthRequest(BaseModel):
 # ===== 출근 기록 수정 요청 스키마 ===== #
 class WorkChangeRequest(BaseModel):
     store_id: int
-    employee_id: int
+    # employee_id: int
     type: str
     date: str
     origin_start: Optional[str] = None
@@ -128,4 +133,4 @@ class WorkChangeRequest(BaseModel):
 # ===== 출근 기록 수정내역 조회 스키마 ===== #
 class WorkChangeRequestLogSchemas(BaseModel):
     store_id: int
-    employee_id: int
+    # employee_id: int

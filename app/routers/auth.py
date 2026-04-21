@@ -6,7 +6,7 @@ import jwt
 import time
 import json
 from jwt.algorithms import RSAAlgorithm
-from fastapi import APIRouter, Depends, Query, Cookie, HTTPException, Response, Form
+from fastapi import APIRouter, Depends, Query, Cookie, HTTPException, Response, Form, Request
 from fastapi.responses import RedirectResponse, HTMLResponse, JSONResponse
 from sqlalchemy import text, func
 from sqlalchemy.orm import Session
@@ -16,7 +16,7 @@ from datetime import datetime, timedelta
 
 from models import Member, SocialAccount, JwtTokens, StoreMembers, Store, StoreMembersDetail
 from database import get_db, SessionLocal
-from utils.auth_utils import normalize_phone, normalize_birth, convert_gender, password_encode, password_decode, generate_code, save_code, send_code_to_user, verify_code, check_daily_limit, add_token_for_cookie, encode_temp_signup_token, decode_temp_signup_token, verify_token
+from utils.auth_utils import normalize_phone, normalize_birth, convert_gender, password_encode, password_decode, generate_code, save_code, send_code_to_user, verify_code, check_daily_limit, add_token_for_cookie, encode_temp_signup_token, decode_temp_signup_token, verify_token, create_access_token
 from schemas.login import ValidLogin, Signup, PhoneReq, VerifyReq, AppleCallbackRequest
 
 logger = logging.getLogger(__name__)
@@ -44,22 +44,47 @@ router = APIRouter(prefix="/api/auth", tags=["소셜 로그인 관리"])
 
 _state_store = {}
 
-def get_current_member(access_token: str = Cookie(None), db: Session = Depends(get_db)):
-    if not access_token:
+def get_current_member_with_refresh(request: Request,
+                                    response: Response,
+                                    access_token: str = Cookie(None),
+                                    refresh_token: str = Cookie(None),
+                                    db: Session = Depends(get_db)):
+
+    # 1. 액세스 토큰 유효한지 확인
+    if access_token:
+        member_id, error = verify_token(access_token, "access")
+        if not error and member_id:
+            member = db.query(Member).filter(Member.id == member_id).first()
+            if member:
+                return member
+
+    # 2. 액세스 토큰 만료 → 리프레시 토큰 확인
+    if not refresh_token:
         raise HTTPException(status_code=401, detail="로그인이 필요합니다.")
-    
-    member_id, error = verify_token(access_token, "access")
-    print("member_id:", member_id, "error:", error)
-    
+
+    member_id, error = verify_token(refresh_token, "refresh")
     if error or not member_id:
-        raise HTTPException(status_code=401, detail="유효하지 않은 토큰입니다.")
-    
+        raise HTTPException(status_code=401, detail="세션이 만료됐습니다. 다시 로그인해주세요.")
+
+    # 3. DB에서 리프레시 토큰 유효한지 확인
+    stored_token = db.query(JwtTokens).filter(
+        JwtTokens.member_id == member_id,
+        JwtTokens.refresh_token == refresh_token,
+        JwtTokens.is_revoked == False,
+        JwtTokens.expires_at > datetime.now()
+    ).first()
+
+    if not stored_token:
+        raise HTTPException(status_code=401, detail="세션이 만료됐습니다. 다시 로그인해주세요.")
+
+    # 4. 새 액세스 토큰 발급 후 쿠키에 세팅
+    new_access_token = create_access_token(member_id)
+    response.set_cookie(key="access_token", value=new_access_token, httponly=True)
+
     member = db.query(Member).filter(Member.id == member_id).first()
-    print("member:", member)
-    
     if not member:
         raise HTTPException(status_code=404, detail="사용자를 찾을 수 없습니다.")
-    
+
     return member
 
 # ===================================================== JWT 토큰 검증 ===================================================== #
@@ -103,7 +128,7 @@ def get_me(access_token: str = Cookie(None), db: Session = Depends(get_db)):
 
 @router.get("/my/stores")
 def get_my_stores(
-    current_member: Member = Depends(get_current_member),
+    current_member: Member = Depends(get_current_member_with_refresh),
     db: Session = Depends(get_db)
 ):
     store_members = (

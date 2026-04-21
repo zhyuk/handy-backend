@@ -24,7 +24,6 @@ class BoardResponse(BaseModel):
 
 class BoardCreateResponse(BaseModel):
     store_id: int
-    employee_id: int
     category: str
     title: str
     content: str
@@ -53,7 +52,6 @@ class BoardDetailResponse(BaseModel):
         from_attributes = True
 
 class CommentCreateRequest(BaseModel):
-    employee_id: int
     content: str
     parent_id: int | None = None 
 
@@ -62,7 +60,6 @@ class CommentCreateRequest(BaseModel):
 class PasswordRequest(BaseModel):
     old_password: str
     new_password: str
-    user_id: int
 
 class StoreRequest(BaseModel):
     store_id: int

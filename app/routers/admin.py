@@ -5,6 +5,7 @@ from database import get_db, SessionLocal
 
 from models import Feedback, Faq
 from schemas.admin import FeedbackAnswerSchemas, FaqAddSchemas
+from utils.uitls import create_store_code
 
 router = APIRouter(prefix="/api/admin", tags=["관리자 기능"])
 
@@ -74,5 +75,22 @@ async def delete_faq(id: int, db: Session = Depends(get_db)):
 
     db.commit()
 # ====== 자주 묻는 질문 끝 ====== #
+
+# ====== 매장 승인 ====== #
+@router.get("")
+async def add_stores(db: Session = Depends(get_db)):
+    """
+    ----------------------------------------
+    [관리자용] 승인된 매장 정보 추가 API
+
+    * 관리자가 사업자등록증 사진을 보고 승인을 누른 경우 동작하는 API
+    ----------------------------------------
+    """
+    store_code = create_store_code(db)
+
+    # TODO: Stores 모델에 정보 추가
+    # TODO: StoresMembers 모델에 사장 정보 추가
+    # TODO: 사장한테 매장 승인됐다는 알림 제공
+# ====== 매장 승인 끝 ====== #
 
 # ====== 서비스 공지사항 ====== #

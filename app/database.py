@@ -32,7 +32,7 @@ def create_tables():
     insert_dummy_store()
     insert_test_member()
     insert_dumy_employee()
-    insert_dumy_todo()
+    # insert_dumy_todo()
 
 def insert_dummy_store():
     from models import Store
@@ -134,7 +134,7 @@ def insert_dumy_todo():
         if not dumy_todo:
             todo = StoreMembersTodo(
                 store_id = 1,
-                employee_id = 1,
+                type="public",
                 content = "쓰레기 치워라"                
             )
 
