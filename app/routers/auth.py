@@ -79,7 +79,7 @@ def get_current_member_with_refresh(request: Request,
 
     # 4. 새 액세스 토큰 발급 후 쿠키에 세팅
     new_access_token = create_access_token(member_id)
-    response.set_cookie(key="access_token", value=new_access_token, httponly=True)
+    response.set_cookie(key="access_token", value=new_access_token, httponly=True, secure=True, samesite="none")
 
     member = db.query(Member).filter(Member.id == member_id).first()
     if not member:
@@ -276,8 +276,8 @@ def logout(res: Response, access_token: str = Cookie(None), refresh_token: str =
             token.is_revoked = True
             db.commit()
 
-    res.delete_cookie(key="access_token", httponly=True)
-    res.delete_cookie(key="refresh_token", httponly=True)
+    res.delete_cookie(key="access_token", httponly=True, secure=True, samesite="none")
+    res.delete_cookie(key="refresh_token", httponly=True, secure=True, samesite="none")
 # ===================================================== 로그아웃 ===================================================== #
 
 # ===================================================== 카카오 로그인 ===================================================== #
