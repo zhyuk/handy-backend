@@ -5,6 +5,7 @@ from collections import defaultdict
 from calendar import monthrange
 from datetime import datetime, timedelta, date
 from typing import Optional
+from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException, Response, UploadFile, File, Form
 from sqlalchemy import asc, extract
@@ -115,7 +116,7 @@ async def get_today_work(
     db: Session = Depends(get_db)
 ):
     employee = get_employee_or_404(db, req.store_id, current_member.id)
-    today = datetime.now().date()
+    today = datetime.now(ZoneInfo("Asia/Seoul")).date()
 
     today_work = db.query(StoreMembersWork).filter(
         StoreMembersWork.employee_id == employee.id,
@@ -136,7 +137,7 @@ async def get_work_status(
     db: Session = Depends(get_db)
 ):
     employee = get_employee_or_404(db, req.store_id, current_member.id)
-    today = datetime.now().date()
+    today = datetime.now(ZoneInfo("Asia/Seoul")).date()
 
     log = db.query(StoreMembersWorkLog).filter(
         StoreMembersWorkLog.employee_id == employee.id,
@@ -154,7 +155,7 @@ async def get_todo_list(
     db: Session = Depends(get_db)
 ):
     employee = get_employee_or_404(db, req.store_id, current_member.id)
-    today = datetime.now().date()
+    today = datetime.now(ZoneInfo("Asia/Seoul")).date()
 
     common = db.query(StoreMembersTodo).filter(
         StoreMembersTodo.store_id == req.store_id,
@@ -179,7 +180,7 @@ async def modify_todo(
     db: Session = Depends(get_db)
 ):
     employee = get_employee_or_404(db, req.store_id, current_member.id)
-    today = datetime.now().date()
+    today = datetime.now(ZoneInfo("Asia/Seoul")).date()
 
     try:
         todo = db.query(StoreMembersTodo).filter(
@@ -237,7 +238,7 @@ async def get_weekly_work(
     employee = get_employee_or_404(db, req.store_id, current_member.id)
 
     # 이번주 일요일~토요일 범위
-    today = datetime.now().date()
+    today = datetime.now(ZoneInfo("Asia/Seoul")).date()
     weekday = today.weekday()  # 0=월 ~ 6=일
     monday = today - timedelta(days=weekday)
     sunday = monday + timedelta(days=6)
@@ -280,7 +281,7 @@ async def get_salary_preview(
     db: Session = Depends(get_db)
 ):
     employee = get_employee_or_404(db, req.store_id, current_member.id)
-    year, month = datetime.now().year, datetime.now().month
+    year, month = datetime.now(ZoneInfo("Asia/Seoul")).year, datetime.now(ZoneInfo("Asia/Seoul")).month
 
     logs = db.query(StoreMembersWorkLog).filter(
         StoreMembersWorkLog.employee_id == employee.id,
@@ -670,7 +671,7 @@ async def edit_my_info(
 
 # ======= 출퇴근/휴게 공통 헬퍼 ======= #
 def get_today_worklog(db: Session, employee_id: int, status: str = None, require_no_end: bool = True):
-    today = datetime.now().date()
+    today = datetime.now(ZoneInfo("Asia/Seoul")).date()
     q = db.query(StoreMembersWorkLog).filter(
         StoreMembersWorkLog.employee_id == employee_id,
         StoreMembersWorkLog.work_date == today,
@@ -690,7 +691,7 @@ def add_clock_in(
     db: Session = Depends(get_db)
 ):
     employee = get_employee_or_404(db, body.store_id, current_member.id)
-    now = datetime.now()
+    now = datetime.now(ZoneInfo("Asia/Seoul"))
 
     worklog = StoreMembersWorkLog(
         store_id=body.store_id,
@@ -716,7 +717,7 @@ def add_clock_out(
     if not worklog:
         raise HTTPException(status_code=404, detail="출근 정보를 찾을 수 없습니다.")
 
-    now = datetime.now()
+    now = datetime.now(ZoneInfo("Asia/Seoul"))
     worklog.end_time = now
     worklog.status = "off_work"
     if worklog.break_end_time is None:
@@ -737,7 +738,7 @@ def add_break_start(
     if not worklog:
         raise HTTPException(status_code=404, detail="출근 정보를 찾을 수 없습니다.")
 
-    worklog.break_start_time = datetime.now()
+    worklog.break_start_time = datetime.now(ZoneInfo("Asia/Seoul"))
     worklog.status = "on_break"
     db.commit()
 
@@ -751,7 +752,7 @@ def add_break_end(
 ):
     employee = get_employee_or_404(db, body.store_id, current_member.id)
 
-    today = datetime.now().date()
+    today = datetime.now(ZoneInfo("Asia/Seoul")).date()
     worklog = db.query(StoreMembersWorkLog).filter(
         StoreMembersWorkLog.employee_id == employee.id,
         StoreMembersWorkLog.work_date == today,
@@ -763,7 +764,7 @@ def add_break_end(
     if not worklog:
         raise HTTPException(status_code=404, detail="휴게 중인 출근 정보를 찾을 수 없습니다.")
 
-    worklog.break_end_time = datetime.now()
+    worklog.break_end_time = datetime.now(ZoneInfo("Asia/Seoul"))
     worklog.status = "working"
     db.commit()
 
@@ -776,7 +777,7 @@ async def get_work_logs(
     db: Session = Depends(get_db)
 ):
     employee = get_employee_or_404(db, req.store_id, current_member.id)
-    today = datetime.now().date()
+    today = datetime.now(ZoneInfo("Asia/Seoul")).date()
 
     logs = db.query(StoreMembersWorkLog).filter(
         StoreMembersWorkLog.employee_id == employee.id,

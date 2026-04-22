@@ -15,6 +15,7 @@ from jose import jwt, JWTError, ExpiredSignatureError
 from models import JwtTokens
 from solapi import SolapiMessageService
 from solapi.model import RequestMessage
+from zoneinfo import ZoneInfo
 
 SECRET_KEY  = os.getenv("SECRET_KEY")
 ALGORITHM = os.getenv("ALGORITHM")
@@ -231,7 +232,7 @@ def add_token_for_cookie(member_id: int, db: Session, response: Response):
     access_token = create_access_token(member_id)
     refresh_token, expire = create_refresh_token(member_id)
 
-    now = datetime.now()
+    now = datetime.now(ZoneInfo("Asia/Seoul"))
 
     # 기존 리프레시 토큰 검증
     old_refresh_token = db.query(JwtTokens).filter(JwtTokens.member_id == member_id, JwtTokens.expires_at > now, JwtTokens.is_revoked == False).first()

@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 from pathlib import Path
 from dotenv import load_dotenv
 from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 
 from models import Member, SocialAccount, JwtTokens, StoreMembers, Store, StoreMembersDetail
 from database import get_db, SessionLocal
@@ -71,7 +72,7 @@ def get_current_member_with_refresh(request: Request,
         JwtTokens.member_id == member_id,
         JwtTokens.refresh_token == refresh_token,
         JwtTokens.is_revoked == False,
-        JwtTokens.expires_at > datetime.now()
+        JwtTokens.expires_at > datetime.now(ZoneInfo("Asia/Seoul"))
     ).first()
 
     if not stored_token:
@@ -289,7 +290,7 @@ def kakao_login():
     ----------------------------------------
     """
     state = str(uuid.uuid4())
-    _state_store[state] = datetime.now() + timedelta(minutes=10)
+    _state_store[state] = datetime.now(ZoneInfo("Asia/Seoul")) + timedelta(minutes=10)
     
     login_url = (
         "https://kauth.kakao.com/oauth/authorize"
@@ -308,7 +309,7 @@ async def kakao_callback(code: str, state: str, db: Session = Depends(get_db)):
     ----------------------------------------
     """
     # state 검증
-    if state not in _state_store or _state_store[state] < datetime.now():
+    if state not in _state_store or _state_store[state] < datetime.now(ZoneInfo("Asia/Seoul")):
         _state_store.pop(state, None)
         return JSONResponse(status_code=400, content={"error": "유효하지 않은 요청입니다."})
     
@@ -440,7 +441,7 @@ def google_login():
     ----------------------------------------
     """
     state = str(uuid.uuid4())
-    _state_store[state] = datetime.now() + timedelta(minutes=10)
+    _state_store[state] = datetime.now(ZoneInfo("Asia/Seoul")) + timedelta(minutes=10)
 
     google_auth_url = (
         f"https://accounts.google.com/o/oauth2/auth"
@@ -463,7 +464,7 @@ async def google_callback(code: str, state: str, db: Session = Depends(get_db)):
     ----------------------------------------
     """
     # state 검증
-    if state not in _state_store or _state_store[state] < datetime.now():
+    if state not in _state_store or _state_store[state] < datetime.now(ZoneInfo("Asia/Seoul")):
         _state_store.pop(state, None)
         return JSONResponse(status_code=400, content={"error": "유효하지 않은 요청입니다."})
     
@@ -578,7 +579,7 @@ def apple_login():
     ----------------------------------------
     """
     state = str(uuid.uuid4())
-    _state_store[state] = datetime.now() + timedelta(minutes=10)
+    _state_store[state] = datetime.now(ZoneInfo("Asia/Seoul")) + timedelta(minutes=10)
 
     apple_auth_url = (
         f"https://appleid.apple.com/auth/authorize"
@@ -604,13 +605,6 @@ async def apple_callback(
     애플 소셜로그인 콜백 API
     ----------------------------------------
     """
-    # # state 검증
-    # if state not in _state_store or _state_store[state] < datetime.now():
-    #     _state_store.pop(state, None)
-    #     return JSONResponse(status_code=400, content={"error": "유효하지 않은 요청입니다."})
-
-    # del _state_store[state]
-
     # client_secret 생성 (애플은 JWT로 동적 생성 필요)
     client_secret = _create_apple_client_secret()
 
