@@ -267,23 +267,17 @@ def signup(req: Signup, res: Response, db: Session = Depends(get_db), signup_tok
 # ===================================================== 로그아웃 ===================================================== #
 @router.post("/logout")
 def logout(res: Response, access_token: str = Cookie(None), refresh_token: str = Cookie(None), db: Session = Depends(get_db)):
-    """
-    ----------------------------------------
-    로그아웃 API
-    ----------------------------------------
-    """
-
     if refresh_token:
-        token = db.query(JwtTokens).filter(JwtTokens.refresh_token == refresh_token, JwtTokens.is_revoked == False).first()
-
+        token = db.query(JwtTokens).filter(
+            JwtTokens.refresh_token == refresh_token,
+            JwtTokens.is_revoked == False
+        ).first()
         if token:
             token.is_revoked = True
             db.commit()
 
-    res.delete_cookie(key="refresh_token")
-    res.delete_cookie(key="access_token")
-
-    return JSONResponse(status_code=200, content={"message": "로그아웃 완료"})
+    res.delete_cookie(key="access_token", httponly=True)
+    res.delete_cookie(key="refresh_token", httponly=True)
 # ===================================================== 로그아웃 ===================================================== #
 
 # ===================================================== 카카오 로그인 ===================================================== #

@@ -210,7 +210,6 @@ class StoreMembersWork(Base):
     store_id = Column(BigInteger, ForeignKey("stores.id"), nullable=False)
     employee_id = Column(BigInteger, ForeignKey("store_members.id"), nullable=False)
     part_id = Column(BigInteger, ForeignKey("store_parts.id"), nullable=True)
-    day_of_week = Column(Integer, nullable=False)
     work_date = Column(Date, nullable=False)
     work_start = Column(Time, nullable=True)
     work_end = Column(Time, nullable=True)

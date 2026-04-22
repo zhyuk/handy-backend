@@ -308,7 +308,13 @@ async def get_personal_notification(
     current_member: Member = Depends(get_current_member_with_refresh),
     db: Session = Depends(get_db)
 ):
-    query = db.query(Notification).filter(Notification.employee_id == current_member.id)
+    # store_members.id 목록 먼저 조회
+    employee_ids = [
+        sm.id for sm in db.query(StoreMembers)
+        .filter(StoreMembers.member_id == current_member.id).all()
+    ]
+
+    query = db.query(Notification).filter(Notification.employee_id.in_(employee_ids))
     if unread_only:
         query = query.filter(Notification.is_read == False)
     return query.order_by(desc(Notification.created_at)).all()

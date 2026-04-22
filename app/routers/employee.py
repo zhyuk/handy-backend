@@ -236,10 +236,40 @@ async def get_weekly_work(
 ):
     employee = get_employee_or_404(db, req.store_id, current_member.id)
 
-    return db.query(StoreMembersWork).filter(
+    # 이번주 일요일~토요일 범위
+    today = datetime.now().date()
+    weekday = today.weekday()  # 0=월 ~ 6=일
+    monday = today - timedelta(days=weekday)
+    sunday = monday + timedelta(days=6)
+
+    schedules = db.query(StoreMembersWork).filter(
         StoreMembersWork.employee_id == employee.id,
-        StoreMembersWork.store_id == req.store_id
-    ).all()
+        StoreMembersWork.store_id == req.store_id,
+        StoreMembersWork.work_date >= monday,
+        StoreMembersWork.work_date <= sunday,
+    ).order_by(StoreMembersWork.work_date, StoreMembersWork.part_id).all()
+
+    # 날짜별 그룹핑 (여러 파트 → 하나로)
+    from collections import defaultdict
+    day_map = {}
+    for s in schedules:
+        key = s.work_date.isoformat()
+        dow = s.work_date.weekday()  # 0=월~6=일
+        js_dow = (dow + 1) % 7
+        if key not in day_map:
+            day_map[key] = {
+                "work_date": key,
+                "day_of_week": js_dow,
+                "work_start": str(s.work_start)[:5] if s.work_start else None,
+                "work_end": str(s.work_end)[:5] if s.work_end else None,
+                "is_holiday": s.is_holiday,
+            }
+        else:
+            # 더 늦은 퇴근 시간으로 업데이트
+            if s.work_end and (day_map[key]["work_end"] is None or s.work_end > datetime.strptime(day_map[key]["work_end"], "%H:%M").time()):
+                day_map[key]["work_end"] = str(s.work_end)[:5]
+
+    return list(day_map.values())
 
 
 # ======= 이번달 급여 미리보기 ======= #
@@ -523,6 +553,9 @@ def get_my_info(
     days_since_joined = (date.today() - store_member.joined_at.date()).days + 1
 
     day_names = {1: "월", 2: "화", 3: "수", 4: "목", 5: "금", 6: "토", 7: "일"}
+
+    parts = db.query(StorePart).filter(StorePart.store_id == store_id).order_by(StorePart.start_time).all()
+
     schedules = (
         db.query(StoreMembersWork, StorePart)
         .outerjoin(StorePart, StoreMembersWork.part_id == StorePart.id)
@@ -532,19 +565,32 @@ def get_my_info(
             StoreMembersWork.is_holiday == False,
             StoreMembersWork.part_id.isnot(None),
         )
-        .order_by(StoreMembersWork.day_of_week, StoreMembersWork.part_id)
+        .order_by(StoreMembersWork.work_date, StoreMembersWork.part_id)
         .all()
     )
 
     day_map = defaultdict(lambda: {"day": "", "time": "", "tags": []})
+
     for work, part in schedules:
-        if work.work_start and work.work_end:
-            key = work.day_of_week
-            if not day_map[key]["day"]:
-                day_map[key]["day"] = day_names.get(key, "")
-                day_map[key]["time"] = f"{work.work_start.strftime('%H:%M')} ~ {work.work_end.strftime('%H:%M')}"
-            if part and part.name:
-                day_map[key]["tags"].append(part.name)
+        if not work.work_start or not work.work_end:
+            continue
+
+        key = work.work_date.weekday() + 1
+
+        if not day_map[key]["day"]:
+            day_map[key]["day"] = day_names[key]
+            day_map[key]["time"] = f"{work.work_start.strftime('%H:%M')} ~ {work.work_end.strftime('%H:%M')}"
+        else:
+            current_end = day_map[key]["time"].split(" ~ ")[1]
+            new_end = work.work_end.strftime('%H:%M')
+            if new_end > current_end:
+                start = day_map[key]["time"].split(" ~ ")[0]
+                day_map[key]["time"] = f"{start} ~ {new_end}"
+
+        for p in parts:
+            if work.work_start < p.end_time and work.work_end > p.start_time:
+                if p.name not in day_map[key]["tags"]:
+                    day_map[key]["tags"].append(p.name)
 
     return {
         "name": member.name,
@@ -576,7 +622,6 @@ def get_my_info(
         "health_certificate": detail.health_certificate if detail else None,
         "schedule": [day_map[k] for k in sorted(day_map.keys())],
     }
-
 
 @router.post("/mypage/edit")
 async def edit_my_info(
@@ -740,41 +785,75 @@ async def get_work_logs(
         extract('month', StoreMembersWorkLog.work_date) == req.month,
     ).all()
 
-    schedules = db.query(StoreMembersWork).filter(
+    schedules_raw = db.query(StoreMembersWork).filter(
         StoreMembersWork.employee_id == employee.id,
         StoreMembersWork.store_id == req.store_id,
         extract('year', StoreMembersWork.work_date) == req.year,
         extract('month', StoreMembersWork.work_date) == req.month,
     ).all()
 
+    # 파트 목록 조회
+    parts = db.query(StorePart).filter(StorePart.store_id == req.store_id).order_by(StorePart.start_time).all()
+
+    # 실제 출퇴근 시간 기준으로 걸치는 파트 태그 계산
+    def get_tags(start_time, end_time):
+        if not start_time or not end_time:
+            return []
+        tags = []
+        for part in parts:
+            if start_time < part.end_time and end_time > part.start_time:
+                tags.append(part.name)
+        return tags
+
+    sched_map = {}
+    for s in schedules_raw:
+        key = str(s.work_date)
+        if key not in sched_map:
+            sched_map[key] = {
+                "work_date": s.work_date,
+                "is_holiday": s.is_holiday or False,
+                "work_start": s.work_start,
+                "work_end": s.work_end,
+            }
+        else:
+            if s.work_start and (sched_map[key]["work_start"] is None or s.work_start < sched_map[key]["work_start"]):
+                sched_map[key]["work_start"] = s.work_start
+            if s.work_end and (sched_map[key]["work_end"] is None or s.work_end > sched_map[key]["work_end"]):
+                sched_map[key]["work_end"] = s.work_end
+
     log_map = {str(l.work_date): l for l in logs}
     result = []
 
-    for sched in schedules:
-        if sched.work_date > today:
+    for key, sched in sched_map.items():
+        if sched["work_date"] > today:
             continue
-        log = log_map.get(str(sched.work_date))
+        log = log_map.get(key)
+        sched_start = str(sched["work_start"]) if sched["work_start"] else None
+        sched_end = str(sched["work_end"]) if sched["work_end"] else None
+
         if log:
             result.append({
-                "work_date": sched.work_date,
+                "work_date": sched["work_date"],
                 "start_time": str(log.start_time) if log.start_time else None,
                 "end_time": str(log.end_time) if log.end_time else None,
                 "break_start_time": str(log.break_start_time) if log.break_start_time else None,
                 "break_end_time": str(log.break_end_time) if log.break_end_time else None,
                 "status": log.status,
-                "is_holiday": sched.is_holiday or False,
-                "sched_start": str(sched.work_start) if sched.work_start else None,
-                "sched_end": str(sched.work_end) if sched.work_end else None,
+                "is_holiday": sched["is_holiday"],
+                "sched_start": sched_start,
+                "sched_end": sched_end,
+                "tags": get_tags(log.start_time, log.end_time),  # 추가
             })
         else:
             result.append({
-                "work_date": sched.work_date,
+                "work_date": sched["work_date"],
                 "start_time": None, "end_time": None,
                 "break_start_time": None, "break_end_time": None,
-                "status": "absent" if not (sched.is_holiday or False) else None,
-                "is_holiday": sched.is_holiday or False,
-                "sched_start": str(sched.work_start) if sched.work_start else None,
-                "sched_end": str(sched.work_end) if sched.work_end else None,
+                "status": "absent" if not sched["is_holiday"] else None,
+                "is_holiday": sched["is_holiday"],
+                "sched_start": sched_start,
+                "sched_end": sched_end,
+                "tags": [],  # 추가
             })
     return result
 
