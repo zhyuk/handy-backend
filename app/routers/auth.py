@@ -740,7 +740,7 @@ async def _verify_apple_token(id_token: str) -> dict:
 # ===================================================== 애플 로그인 ===================================================== #
 
 @router.delete("/withdrawal")
-async def delete_user(user_id: int, db: Session = Depends(get_db)):
+async def delete_user(user_id: int, res: Response, db: Session = Depends(get_db)):
     """
     ----------------------------------------
     회원탈퇴 API
@@ -753,4 +753,7 @@ async def delete_user(user_id: int, db: Session = Depends(get_db)):
     member.is_deleted = True
 
     db.commit()
+
+    res.delete_cookie(key="access_token", httponly=True, secure=True, samesite="none")
+    res.delete_cookie(key="refresh_token", httponly=True, secure=True, samesite="none")
     

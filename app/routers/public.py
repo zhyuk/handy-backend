@@ -2,7 +2,7 @@ import os
 import uuid
 import json
 from fastapi import APIRouter, Depends, HTTPException, Form, File, UploadFile
-from sqlalchemy import desc, func
+from sqlalchemy import desc, func, and_
 from sqlalchemy.orm import Session
 from database import get_db
 from typing import Optional, List
@@ -304,19 +304,26 @@ async def get_personal_feedback(
 # ==================== 알림 ==================== #
 @router.get("/notification")
 async def get_personal_notification(
+    store_id: int,
     unread_only: bool = False,
     current_member: Member = Depends(get_current_member_with_refresh),
     db: Session = Depends(get_db)
 ):
-    # store_members.id 목록 먼저 조회
-    employee_ids = [
-        sm.id for sm in db.query(StoreMembers)
-        .filter(StoreMembers.member_id == current_member.id).all()
-    ]
+    store_member = db.query(StoreMembers).filter(
+        and_(
+            StoreMembers.store_id == store_id,
+            StoreMembers.member_id == current_member.id
+        )
+    ).first()
 
-    query = db.query(Notification).filter(Notification.employee_id.in_(employee_ids))
+    if not store_member:
+        raise HTTPException(status_code=403, detail="해당 매장에 대한 접근 권한이 없습니다.")
+
+    query = db.query(Notification).filter(Notification.employee_id == store_member.id, Notification.store_id == store_id)
+
     if unread_only:
         query = query.filter(Notification.is_read == False)
+
     return query.order_by(desc(Notification.created_at)).all()
 
 

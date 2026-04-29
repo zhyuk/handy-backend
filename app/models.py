@@ -76,6 +76,7 @@ class Store(Base):
     closing_reports = relationship("DailyClosingReport", back_populates="store", cascade="all, delete-orphan")
     change_requests = relationship("WorkLogChangeRequest", back_populates="store", cascade="all, delete-orphan")
     setting = relationship("StoreSetting", back_populates="store", uselist=False)
+    notifications = relationship("Notification", back_populates="store", cascade="all, delete-orphan")
 
 class StoreSetting(Base):
     __tablename__ = "store_settings"
@@ -437,6 +438,7 @@ class Notification(Base):
     __tablename__ = "notifications"
 
     id = Column(BigInteger, primary_key=True, autoincrement=True, comment="알림 고유번호")
+    store_id = Column(BigInteger, ForeignKey("stores.id"), nullable=False, comment="매장 고유번호")
     employee_id = Column(BigInteger, ForeignKey("store_members.id"), nullable=False, comment="직원 고유번호")
     type = Column(String(20), nullable=False, comment="알림 유형")
     message = Column(String(200), nullable=False, comment="알림 내용")
@@ -445,6 +447,7 @@ class Notification(Base):
     created_at = Column(DateTime, server_default=func.now(), comment="알림 발생 시간")
 
     employee = relationship("StoreMembers", back_populates="notifications")
+    store = relationship("Store", back_populates="notifications")
 
 class Withdrawal(Base):
     __tablename__ = "withdrawals"

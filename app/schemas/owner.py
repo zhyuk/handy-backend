@@ -1,4 +1,5 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, field_serializer
+from datetime import time, datetime
 from typing import Optional
 
 class setStoreInfoSchemas(BaseModel):
