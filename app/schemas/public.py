@@ -63,3 +63,7 @@ class PasswordRequest(BaseModel):
 
 class StoreRequest(BaseModel):
     store_id: int
+
+class WithdrawlRequestSchemas(BaseModel):
+    member_id: int
+    reason: str

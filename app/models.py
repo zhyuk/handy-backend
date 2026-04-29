@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, BigInteger, String, Text, Boolean, DateTime, ForeignKey, func, Date, UniqueConstraint, Numeric, Time, JSON, Enum
+from sqlalchemy import Column, Integer, BigInteger, String, Text, Boolean, DateTime, ForeignKey, func, Date, UniqueConstraint, Numeric, Time, JSON, Enum, ARRAY
 from sqlalchemy.orm import relationship
 from database import Base
 import enum
@@ -57,6 +57,7 @@ class Store(Base):
 
     id = Column(BigInteger, primary_key=True, autoincrement=True)
     code = Column(BigInteger, unique=True)
+    rawDigits = Column(String(30), nullable=False, comment="사업자 등록 번호")
     name = Column(String(100), nullable=False)
     address = Column(String(255), nullable=False)
     addressDetail = Column(String(255), nullable=True)
@@ -64,7 +65,7 @@ class Store(Base):
     owner = Column(String(100), nullable=False)
     number = Column(String(20), nullable=False)
     image = Column(Text, nullable=False)
-    radius = Column(Integer, nullable=True)
+    radius = Column(Integer, nullable=True, comment="출퇴근 허용거리(m)")
 
     # Relationships
     map_info = relationship("StoreMap", back_populates="store", cascade="all, delete-orphan")
@@ -74,6 +75,44 @@ class Store(Base):
     all_todos = relationship("StoreMembersTodo", back_populates="store", cascade="all, delete-orphan")
     closing_reports = relationship("DailyClosingReport", back_populates="store", cascade="all, delete-orphan")
     change_requests = relationship("WorkLogChangeRequest", back_populates="store", cascade="all, delete-orphan")
+    setting = relationship("StoreSetting", back_populates="store", uselist=False)
+
+class StoreSetting(Base):
+    __tablename__ = "store_settings"
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    store_id = Column(BigInteger, ForeignKey("stores.id"), nullable=False, unique=True)
+
+    # [1] 운영 및 출퇴근 기본
+    open_time = Column(Time, nullable=True, comment="매장 오픈시간")
+    close_time = Column(Time, nullable=True, comment="매장 마감시간")
+    late_minutes = Column(Integer, nullable=True, comment="지각 기준(분)")
+
+    # [2] 휴무 설정
+    is_holiday = Column(Boolean, default=False, comment="고정휴무 여부")
+    holiday_cycle = Column(String(20), nullable=True, comment="휴무 주기(매주/격주 등)")
+    holiday_day = Column(ARRAY(Integer), nullable=True, comment="휴무 요일(0-6 또는 월-일)")
+
+    # [연장수당 - 기존 유지]
+    has_overtime_pay = Column(Boolean, nullable=True, comment="연장 수당 여부")
+    overtime_after_8h = Column(Boolean, nullable=True, comment="하루 8시간 초과 시 연장 수당 적용여부")
+    overtime_after_40h = Column(Boolean, nullable=True, comment="주 40시간 초과 시 연장 수당 적용")
+    overtime_multiplier = Column(Numeric(3, 2), nullable=True, comment="연장 수당 비율")
+    overtime_minutes = Column(Integer, nullable=True, comment="연장 수당 발생 기준(분)")
+
+    # [야간수당 - 연장수당 구조와 동일하게 추가]
+    has_night_pay = Column(Boolean, nullable=True, comment="야간 수당 여부")
+    night_multiplier = Column(Numeric(3, 2), nullable=True, comment="야간 수당 비율")
+    night_minutes = Column(Integer, nullable=True, comment="야간 수당 발생 기준(분)")
+
+    # [휴일수당 - 연장수당 구조와 동일하게 추가]
+    has_holiday_pay = Column(Boolean, nullable=True, comment="휴일 수당 여부")
+    holiday_after_8h = Column(Boolean, nullable=True, comment="휴일 8시간 초과 시 연장 적용여부")
+    holiday_multiplier_under_8h = Column(Numeric(3, 2), nullable=True, comment="휴일 8시간 이내 수당 비율")
+    holiday_multiplier_over_8h = Column(Numeric(3, 2), nullable=True, comment="휴일 8시간 초과 수당 비율")
+    holiday_minutes = Column(Integer, nullable=True, comment="휴일 수당 발생 기준(분)")
+
+    store = relationship("Store", back_populates="setting")
 
 class StoreMap(Base):
     __tablename__ = "store_maps"
@@ -406,3 +445,10 @@ class Notification(Base):
     created_at = Column(DateTime, server_default=func.now(), comment="알림 발생 시간")
 
     employee = relationship("StoreMembers", back_populates="notifications")
+
+class Withdrawal(Base):
+    __tablename__ = "withdrawals"
+    id = Column(BigInteger, primary_key=True, autoincrement=True, comment="탈퇴 고유번호")
+    member_id = Column(BigInteger, ForeignKey("members.id"), comment="멤버 고유번호")
+    reason = Column(String(300), comment="탈퇴 사유")
+    created_at = Column(DateTime, server_default=func.now(), comment="탈퇴 시간")

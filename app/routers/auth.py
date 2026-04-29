@@ -50,6 +50,11 @@ def get_current_member_with_refresh(request: Request,
                                     access_token: str = Cookie(None),
                                     refresh_token: str = Cookie(None),
                                     db: Session = Depends(get_db)):
+    
+    is_prod = os.getenv("ENV") == "production"
+
+    print("access_token:", access_token)
+    print("refresh_token:", refresh_token)
 
     # 1. 액세스 토큰 유효한지 확인
     if access_token:
@@ -80,7 +85,13 @@ def get_current_member_with_refresh(request: Request,
 
     # 4. 새 액세스 토큰 발급 후 쿠키에 세팅
     new_access_token = create_access_token(member_id)
-    response.set_cookie(key="access_token", value=new_access_token, httponly=True, secure=True, samesite="none")
+    response.set_cookie(
+    key="access_token",
+    value=new_access_token,
+    httponly=True,
+    secure=is_prod,
+    samesite="none" if is_prod else "lax",
+    )
 
     member = db.query(Member).filter(Member.id == member_id).first()
     if not member:
@@ -727,3 +738,19 @@ async def _verify_apple_token(id_token: str) -> dict:
         audience=APPLE_CLIENT_ID,
     )
 # ===================================================== 애플 로그인 ===================================================== #
+
+@router.delete("/withdrawal")
+async def delete_user(user_id: int, db: Session = Depends(get_db)):
+    """
+    ----------------------------------------
+    회원탈퇴 API
+
+    * 소프트삭제
+    ----------------------------------------
+    """
+
+    member = db.query(Member).filer(Member.id == user_id).first()
+    member.is_deleted = True
+
+    db.commit()
+    

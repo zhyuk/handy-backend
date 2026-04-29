@@ -7,9 +7,9 @@ from sqlalchemy.orm import Session
 from database import get_db
 from typing import Optional, List
 
-from models import Store, StoreMap, StoreCommunity, StoreCommunityComment, StoreMembers, Member, Notice, Faq, Feedback, Notification
+from models import Store, StoreMap, StoreCommunity, StoreCommunityComment, StoreMembers, Member, Notice, Faq, Feedback, Notification, Withdrawal
 from utils.auth_utils import password_encode, password_decode
-from schemas.public import BoardRequest, BoardResponse, BoardDetailResponse, CommentCreateRequest, PasswordRequest, StoreRequest
+from schemas.public import BoardRequest, BoardResponse, BoardDetailResponse, CommentCreateRequest, PasswordRequest, StoreRequest, WithdrawlRequestSchemas
 from routers.auth import get_current_member_with_refresh
 
 router = APIRouter(prefix="/api/common", tags=["공통 기능"])
@@ -328,3 +328,21 @@ async def mark_notification_read(id: int, db: Session = Depends(get_db)):
     notification.is_read = True
     db.commit()
     return {"success": True}
+
+@router.post("/withdrawal")
+async def user_delete_reason(req: WithdrawlRequestSchemas, db: Session = Depends(get_db)):
+    """
+    ----------------------------------------
+    회원탈퇴 사유 API
+
+    * 추후 스케줄링 구현으로 30일 지나면 해당 Member.id의 개인정보 모두 null로 업데이트
+    ----------------------------------------
+    """
+
+    new_withdrawal = Withdrawal(
+        member_id = req.member_id,
+        reason = req.reason
+    )
+
+    db.add(new_withdrawal)
+    db.commit()

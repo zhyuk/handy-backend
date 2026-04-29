@@ -3,14 +3,15 @@ import httpx
 import json
 from fastapi import APIRouter, Depends, Query, Cookie, HTTPException, Response, UploadFile, File, Form
 from sqlalchemy import text, func
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 from pathlib import Path
 from dotenv import load_dotenv
 import uuid
 
-from models import BusinessRequest
+from models import BusinessRequest, Store, StoreSetting
 from database import get_db, SessionLocal
 from schemas.login import StoreInfo
+from schemas.owner import setStoreInfoSchemas
 
 ENV_PATH = Path(__file__).resolve().parent.parent.parent / ".env"
 load_dotenv(ENV_PATH)
@@ -60,6 +61,7 @@ async def verify_business(bno: str):
 
 @router.post("/stores")
 async def add_store_request(
+    rawDigits: str = Form(...),
     storeName: str = Form(...),
     address: str = Form(...),
     addressDetail: str | None = Form(None),
@@ -74,10 +76,10 @@ async def add_store_request(
     매장정보 추가 API
     ----------------------------------------
     """
-    # print(storeName, address, addressDetail, businessType, ownerName, ownerPhone, image)
     file_name, file_path, content = await prepare_business_image(image)
     try:
         request = BusinessRequest(
+            rawDigits = rawDigits,
             name = storeName,
             address = address,
             addressDetail = addressDetail,
@@ -99,6 +101,41 @@ async def add_store_request(
         db.rollback()
         raise HTTPException(status_code=500, detail="데이터 저장 중 오류가 발생했습니다.")
     
+@router.put("/store/update")
+async def update_store_info(req: setStoreInfoSchemas, db: Session = Depends(get_db)):
+    """
+    ----------------------------------------
+    매장정보 수정 API
+    ----------------------------------------
+    """
+    storeInfo = db.query(Store).filter(Store.id == req.id).first()
+
+    if not storeInfo:
+        raise HTTPException(status_code=404, detail="해당 매장을 찾을 수 없습니다.")
+    
+    storeInfo.name = req.name
+    storeInfo.address = req.address
+    storeInfo.addressDetail = req.addressDetail
+    storeInfo.industry = req.industry
+    storeInfo.owner = req.owner
+    storeInfo.number = req.number
+
+    db.commit()
+
+@router.get("/store/{id}")
+async def get_store_info(id: int, db: Session = Depends(get_db)):
+    """
+    ----------------------------------------
+    매장정보 조회 API
+    ----------------------------------------
+    """
+    store = (
+        db.query(Store)
+        .options(joinedload(Store.setting))
+        .filter(Store.id == id)
+        .first()
+    )
+    return store
 
 # TODO: 직원 스케줄(근무표) 변경요청 수락 시, StoreMemberWork 업데이트 진행.
 # TODO: 매장 공지사항 작성 시, Notification에 데이터 추가. employee_id는 해당 매장에 재직 중인 모두

@@ -39,7 +39,7 @@ app.include_router(admin.router)
 origins = [
     "http://localhost:5173",
     "http://localhost:3000",
-    "http://localhost",
+    "http://localhost:8000",
     "https://local.handy.com",
     "https://handy-frontend-dev.vercel.app"
 ]

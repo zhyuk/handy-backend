@@ -251,18 +251,20 @@ def add_token_for_cookie(member_id: int, db: Session, response: Response):
     db.add(token)
     db.commit()
 
+    is_prod = os.getenv("ENV") == "production"
+
     response.set_cookie(
         key="access_token",
         value=access_token,
         httponly=True,
-        secure=True,
-        samesite="none",
+        secure=is_prod,
+        samesite="none" if is_prod else "lax",
     )
     response.set_cookie(
         key="refresh_token",
         value=refresh_token,
         httponly=True,
-        secure=True,
-        samesite="none",
+        secure=is_prod,
+        samesite="none" if is_prod else "lax",
     )
 # ===================================================== JWT TOKENS ===================================================== #
