@@ -667,6 +667,33 @@ async def edit_my_info(
     except Exception:
         db.rollback()
         raise HTTPException(status_code=500, detail="서버 오류로 인해 정보 수정에 실패했습니다.")
+    
+@router.delete("/profile/document")
+async def delete_document(
+    data: dict,
+    current_member: Member = Depends(get_current_member_with_refresh),
+    db: Session = Depends(get_db)
+):
+    field = data.get("field")
+    allowed = {"resume", "employment_contract", "health_certificate"}
+    if field not in allowed:
+        raise HTTPException(status_code=400)
+
+    store_member = db.query(StoreMembers).filter(
+        StoreMembers.member_id == current_member.id
+    ).first()
+    if not store_member:
+        raise HTTPException(status_code=404)
+
+    detail = db.query(StoreMembersDetail).filter(
+        StoreMembersDetail.store_member_id == store_member.id
+    ).first()
+    if not detail:
+        raise HTTPException(status_code=404)
+
+    setattr(detail, field, None)
+    db.commit()
+    return {"ok": True}
 
 
 # ======= 출퇴근/휴게 공통 헬퍼 ======= #
