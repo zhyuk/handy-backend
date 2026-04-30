@@ -144,7 +144,8 @@ async def get_store_info(id: int, db: Session = Depends(get_db)):
 async def update_store_setting(store_id: int, data: dict, db: Session = Depends(get_db)):
     setting = db.query(StoreSetting).filter(StoreSetting.store_id == store_id).first()
     if not setting:
-        raise HTTPException(status_code=404)
+        setting = StoreSetting(store_id=store_id)
+        db.add(setting)
     for key, val in data.items():
         setattr(setting, key, val)
     db.commit()
