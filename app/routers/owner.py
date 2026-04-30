@@ -8,7 +8,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 import uuid
 
-from models import BusinessRequest, Store, StoreSetting
+from models import BusinessRequest, Store, StoreSetting, StorePart
 from database import get_db, SessionLocal
 from schemas.login import StoreInfo
 from schemas.owner import setStoreInfoSchemas
@@ -131,11 +131,76 @@ async def get_store_info(id: int, db: Session = Depends(get_db)):
     """
     store = (
         db.query(Store)
-        .options(joinedload(Store.setting))
+        .options(
+            joinedload(Store.setting),
+            joinedload(Store.parts)
+        )
         .filter(Store.id == id)
         .first()
     )
     return store
+
+@router.put("/store/{store_id}/setting")
+async def update_store_setting(store_id: int, data: dict, db: Session = Depends(get_db)):
+    setting = db.query(StoreSetting).filter(StoreSetting.store_id == store_id).first()
+    if not setting:
+        raise HTTPException(status_code=404)
+    for key, val in data.items():
+        setattr(setting, key, val)
+    db.commit()
+    return {"ok": True}
+
+@router.put("/store/{store_id}/parts")
+async def update_store_parts(
+    store_id: int,
+    data: dict,
+    db: Session = Depends(get_db)
+):
+    # 기존 파트 삭제 후 재삽입
+    db.query(StorePart).filter(StorePart.store_id == store_id).delete()
+    for p in data["parts"]:
+        db.add(StorePart(
+            store_id=store_id,
+            name=p["name"],
+            start_time=p["start_time"],
+            end_time=p["end_time"],
+        ))
+    db.commit()
+    return {"ok": True}
+
+@router.put("/store/{store_id}/attendance-standard")
+async def update_attendance_standard(
+    store_id: int,
+    data: dict,
+    db: Session = Depends(get_db)
+):
+    
+    print(data.get("radius"))
+    # stores 테이블 radius 업데이트
+    store = db.query(Store).filter(Store.id == store_id).first()
+    if not store:
+        raise HTTPException(status_code=404)
+    store.radius = data.get("radius")
+
+    # store_settings 테이블 업데이트
+    setting = db.query(StoreSetting).filter(StoreSetting.store_id == store_id).first()
+    if setting:
+        setting.late_minutes = data.get("late_minutes")
+        setting.has_overtime_pay = data.get("has_overtime_pay")
+        setting.overtime_after_8h = data.get("overtime_after_8h")
+        setting.overtime_after_40h = data.get("overtime_after_40h")
+        setting.overtime_multiplier = data.get("overtime_multiplier")
+        setting.overtime_minutes = data.get("overtime_minutes")
+        setting.has_night_pay = data.get("has_night_pay")
+        setting.night_multiplier = data.get("night_multiplier")
+        setting.night_minutes = data.get("night_minutes")
+        setting.has_holiday_pay = data.get("has_holiday_pay")
+        setting.holiday_multiplier_under_8h = data.get("holiday_multiplier_under_8h")
+        setting.holiday_multiplier_over_8h = data.get("holiday_multiplier_over_8h")
+        setting.holiday_minutes = data.get("holiday_minutes")
+
+    db.commit()
+    return {"ok": True}
 
 # TODO: 직원 스케줄(근무표) 변경요청 수락 시, StoreMemberWork 업데이트 진행.
 # TODO: 매장 공지사항 작성 시, Notification에 데이터 추가. employee_id는 해당 매장에 재직 중인 모두

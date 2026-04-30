@@ -77,6 +77,7 @@ class Store(Base):
     change_requests = relationship("WorkLogChangeRequest", back_populates="store", cascade="all, delete-orphan")
     setting = relationship("StoreSetting", back_populates="store", uselist=False)
     notifications = relationship("Notification", back_populates="store", cascade="all, delete-orphan")
+    parts = relationship("StorePart", back_populates="store")
 
 class StoreSetting(Base):
     __tablename__ = "store_settings"
@@ -92,7 +93,7 @@ class StoreSetting(Base):
     # [2] 휴무 설정
     is_holiday = Column(Boolean, default=False, comment="고정휴무 여부")
     holiday_cycle = Column(String(20), nullable=True, comment="휴무 주기(매주/격주 등)")
-    holiday_day = Column(ARRAY(Integer), nullable=True, comment="휴무 요일(0-6 또는 월-일)")
+    holiday_day = Column(ARRAY(String), nullable=True, comment="휴무 요일(0-6 또는 월-일)")
 
     # [연장수당 - 기존 유지]
     has_overtime_pay = Column(Boolean, nullable=True, comment="연장 수당 여부")
@@ -133,6 +134,8 @@ class StorePart(Base):
     name = Column(String(20), nullable=False)   # "오픈", "미들", "마감"
     start_time = Column(Time, nullable=False)
     end_time = Column(Time, nullable=False)
+
+    store = relationship("Store", back_populates="parts")
 # ==========================================
 # 3. 가입 및 승인 프로세스
 # ==========================================
